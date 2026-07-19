@@ -1,0 +1,26 @@
+{
+  "devices": [
+    { "id": "client", "kind": "source", "egress": "access" },
+    {
+      "id": "router",
+      "kind": "router",
+      "routes": { "service": "backbone" },
+      "default_route": "backbone"
+    },
+    { "id": "service", "kind": "sink" }
+  ],
+  "channels": [
+    {
+      "id": "access",
+      "endpoints": ["client", "router"],
+      "bit_rate_bps": 10000000,
+      "propagation_delay_ns": 100000
+    },
+    {
+      "id": "backbone",
+      "endpoints": ["router", "service"],
+      "bit_rate_bps": 1000000000,
+      "propagation_delay_ns": 500000
+    }
+  ]
+}

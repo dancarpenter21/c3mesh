@@ -1,0 +1,26 @@
+devices:
+  - id: workstation
+    kind: source
+    egress: uplink
+  - id: switch
+    kind: switch
+    forwarding:
+      server_a: link_a
+      server_b: link_b
+  - id: server_a
+    kind: sink
+  - id: server_b
+    kind: sink
+channels:
+  - id: uplink
+    endpoints: [workstation, switch]
+    bit_rate_bps: 100000000
+    propagation_delay_ns: 1000
+  - id: link_a
+    endpoints: [switch, server_a]
+    bit_rate_bps: 100000000
+    propagation_delay_ns: 1000
+  - id: link_b
+    endpoints: [switch, server_b]
+    bit_rate_bps: 100000000
+    propagation_delay_ns: 1000
