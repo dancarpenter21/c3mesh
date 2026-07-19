@@ -31,11 +31,13 @@ let network = NetworkConfig {
             id: "sender".into(),
             kind: DeviceKind::Source { egress: "link".into() },
             mobility: Default::default(),
+            interference: vec![],
         },
         DeviceConfig {
             id: "receiver".into(),
             kind: DeviceKind::Sink,
             mobility: Default::default(),
+            interference: vec![],
         },
     ],
     channels: vec![ChannelConfig {
@@ -45,6 +47,7 @@ let network = NetworkConfig {
         propagation_delay_ns: 10_000_000,
         state: ChannelState::Operational,
         distance: None,
+        radio: None,
     }],
 };
 
@@ -144,10 +147,11 @@ cargo run --example direct
 cargo run --example yaml_switch --features yaml
 cargo run --example json_router --features json
 cargo run --example moving_link
+cargo run --example intermittent_jamming
 ```
 
 The examples cover direct delivery, static switch forwarding, routed multi-hop
-delivery, and a moving aircraft radio link.
+delivery, a moving aircraft radio link, and intermittent receiver jamming.
 
 ## Moving devices and distance-aware links
 
@@ -194,6 +198,210 @@ Distance is sampled at transmission start in version 0.1; acceleration,
 orbital mechanics, obstruction, Doppler shift, and changes during the
 serialization of one packet should be represented by external trajectory/link
 models or shorter packet intervals.
+
+## Wireless spectrum and receiver jamming
+
+Jamming is modeled as a condition at a receiving device. A radio channel says
+which frequencies a transmission occupies, while the receiver has one or more
+interference entries covering frequency bands. The simulator combines the
+entries that overlap the transmission band and converts the result into link
+rate or an unavailable link.
+
+The library deliberately does not determine whether a receiver lies inside a
+jammed region. A terrain, propagation, electronic-warfare, or game-world model
+should make that determination and update the receiver's interference
+snapshot. The same API represents deliberate jamming, friendly co-channel
+transmissions, faulty electronics, and other unintended interference.
+
+Channels opt into this behavior with `RadioChannel`. A channel whose `radio`
+field is `None` is bandless and ignores all receiver interference.
+
+```rust
+use c3mesh::{
+    FrequencyBand, InterferenceResponse, RadioChannel, ReceiverInterference,
+};
+
+let radio = RadioChannel {
+    // Half-open interval: 2.400 GHz is included and 2.420 GHz is excluded.
+    band: FrequencyBand::new(2_400_000_000, 2_420_000_000),
+    interference_response: InterferenceResponse {
+        unaffected_below: 0.1,
+        severed_at: 0.9,
+    },
+};
+
+let initial_receiver_interference = vec![ReceiverInterference {
+    band: FrequencyBand::new(2_405_000_000, 2_415_000_000),
+    jammed: 0.6,
+}];
+# let _ = (radio, initial_receiver_interference);
+```
+
+Assign `Some(radio)` to `ChannelConfig::radio`. Assign the initial interference
+vector to the receiving `DeviceConfig::interference`; an empty vector means the
+receiver starts clear. Both fields use serde, so the same model can be written
+in JSON or YAML:
+
+```yaml
+devices:
+  - id: sender
+    kind: source
+    egress: radio
+  - id: receiver
+    kind: sink
+    interference:
+      - band: { lower_hz: 2405000000, upper_hz: 2415000000 }
+        jammed: 0.6
+channels:
+  - id: radio
+    endpoints: [sender, receiver]
+    bit_rate_bps: 1000000
+    radio:
+      band: { lower_hz: 2400000000, upper_hz: 2420000000 }
+      interference_response:
+        unaffected_below: 0.1
+        severed_at: 0.9
+```
+
+### What the 0-1 magnitude means
+
+`jammed` is a normalized receiver-side severity, not dBm, SINR, a percentage,
+or a packet-loss probability. Values must be finite and between `0.0` and
+`1.0`, inclusive:
+
+- `0.0` contributes no interference.
+- `1.0` is maximum severity when the entry covers the entire radio band.
+- Intermediate values represent proportional severity before spectral overlap
+  and the radio's configured tolerance are applied.
+
+For each entry, the simulator multiplies `jammed` by the fraction of the radio
+band it overlaps. Contributions are added and capped at `1.0`. For example, a
+`0.6` entry covering half of the victim band contributes `0.3`. A second
+full-band `0.2` entry produces an aggregate magnitude of `0.5`. Bands are
+half-open, so `[100, 200)` and `[200, 300)` do not overlap.
+
+The aggregate magnitude is mapped through `InterferenceResponse`. At or below
+`unaffected_below`, the channel retains the rate already selected from channel
+state and distance. At or above `severed_at`, it is unavailable. Between those
+thresholds, rate scales linearly. With the default thresholds of `0.0` and
+`1.0`, an aggregate magnitude of `0.5` supports half the base bitrate.
+
+### Dynamic and intermittent interference
+
+Interference snapshots are persistent and piecewise constant. Replacing a
+snapshot replaces every prior band contribution at that timestamp; pass an
+empty vector to clear the receiver. Scheduled changes may be inserted in any
+order, but cannot be scheduled before the simulator's current time. The most
+recent call for a receiver and timestamp wins.
+
+```rust
+use c3mesh::{
+    FrequencyBand, ReceiverInterference, SimTime, SimulationError, Simulator,
+};
+
+# fn configure_jamming(simulator: &mut Simulator) -> Result<(), SimulationError> {
+let pulse = vec![ReceiverInterference {
+    band: FrequencyBand::new(2_400_000_000, 2_420_000_000),
+    jammed: 0.75,
+}];
+
+// Apply a live update at the simulator's current time.
+simulator.set_receiver_interference("receiver", pulse.clone())?;
+
+// Replace it with a scheduled pulse, then clear it 10 ms later.
+simulator.schedule_receiver_interference(
+    SimTime::from_nanos(1_000_000_000),
+    "receiver",
+    pulse,
+)?;
+simulator.schedule_receiver_interference(
+    SimTime::from_nanos(1_010_000_000),
+    "receiver",
+    vec![],
+)?;
+# Ok(())
+# }
+```
+
+Rate is selected from the receiver condition at the transmission's actual
+start, after any FIFO wait. The simulator then checks the entire interval in
+which bits reach the receiver:
+
+```text
+serialization interval = [start, start + serialization time)
+receive window         = [start + propagation delay, receive_at)
+receive_at              = start + serialization time + propagation delay
+```
+
+If a pulse during that receive window would support a lower bitrate than the
+one selected at transmission start, the packet is dropped at its scheduled
+receive time with `DropReason::ReceiverInterference`. It produces no
+`DataReceived` or `PacketDelivered` event. This catches a pulse that has ended
+before packet completion without retroactively moving the channel's FIFO
+schedule. Interference before the first bit arrives or beginning exactly when
+the complete packet arrives does not affect that packet.
+
+Receiver interference is directional. Jamming device B affects transmissions
+from A to B; it does not automatically affect transmissions from B to A. It
+also does not automatically interfere with other receivers or turn ordinary
+c3mesh transmissions into interference sources. External models should update
+each affected receiver explicitly.
+
+### Inspecting and testing jamming
+
+Use `Simulator::receiver_interference_at` to inspect a raw scheduled snapshot.
+Use `Simulator::transmission_metrics_at(channel, sender, time)` to see the
+resolved receiver, frequency band, overlap-adjusted magnitude, base bitrate,
+effective bitrate, and availability for one direction. `TransmissionStarted`
+reports the selected bitrate and band; jamming failures appear as
+`PacketDropped` events.
+
+The complete degradation, recovery, unintended-interference, and intermittent
+pulse workflow is executable:
+
+```console
+cargo run --example intermittent_jamming
+```
+
+For library development, run the focused jamming tests or the complete suite:
+
+```console
+cargo test --test jamming
+cargo test --test jamming intermittent_pulse_during_reception_corrupts_in_flight_packet
+cargo test --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --doc --all-features
+```
+
+Useful expected event sequences are:
+
+- Degraded but stable: `TransmissionStarted`, `DataReceived`, then delivery or
+  forwarding at the lower bitrate.
+- Severed at start: one `PacketDropped` event at the receiver.
+- Off-band interference: the normal unjammed event sequence.
+- A worsening in-flight pulse: `TransmissionStarted`, then `PacketDropped` at
+  the previously calculated receive time.
+
+Common mistakes are treating `50` as 50% instead of using `0.5`, defining an
+empty or reversed frequency interval, expecting a new snapshot to merge with
+the previous one, or scheduling a pulse after the relevant receive window.
+Invalid bands, thresholds, and magnitudes are rejected during topology or
+runtime validation.
+
+This is an abstract deterministic model. It does not calculate received power,
+noise floors, SINR, modulation/coding behavior, BER/PER, retransmission,
+antenna patterns, jammer propagation, adjacent-channel receiver blocking, or
+spectral skirts. Approximate skirts or leakage by supplying additional bands;
+use an external RF model when physical link-budget accuracy is required.
+
+This boundary follows the ITU's receiver-effect definition of interference,
+which covers accidental and intentional causes, and NIST findings that
+interference time scale can materially change link performance. The simple
+rectangular overlap calculation replaces the emitter-spectrum and receiver-
+filter convolution used in physical RF studies. See the
+[ITU radio-interference overview](https://www.itu.int/en/mediacentre/backgrounders/Pages/radio-interference.aspx),
+[NIST time-scale study](https://www.nist.gov/publications/assessing-time-scale-dependent-interference-vulnerabilities-wireless-communications),
+and [NTIA interference assessment](https://www.ntia.gov/sites/default/files/publications/etdocket03-108appendixa_02152005_0.pdf).
 
 ## Model boundaries
 

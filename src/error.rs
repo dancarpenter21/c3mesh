@@ -23,8 +23,12 @@ pub enum ConfigError {
     InvalidDegradedRate(ChannelId),
     /// A device has non-finite coordinates or an invalid waypoint sequence.
     InvalidMobility(DeviceId),
+    /// A device has an invalid receiver-interference entry.
+    InvalidReceiverInterference(DeviceId),
     /// A distance-aware channel has invalid physical or rate parameters.
     InvalidDistanceModel(ChannelId),
+    /// A channel has an invalid radio band or interference response.
+    InvalidRadio(ChannelId),
     /// A device selected a channel to which it is not connected.
     ChannelNotConnected {
         /// The device selecting the channel.
@@ -53,8 +57,14 @@ impl fmt::Display for ConfigError {
                 write!(formatter, "channel `{id}` has an invalid degraded bit rate")
             }
             Self::InvalidMobility(id) => write!(formatter, "device `{id}` has invalid mobility"),
+            Self::InvalidReceiverInterference(id) => {
+                write!(formatter, "device `{id}` has invalid receiver interference")
+            }
             Self::InvalidDistanceModel(id) => {
                 write!(formatter, "channel `{id}` has an invalid distance model")
+            }
+            Self::InvalidRadio(id) => {
+                write!(formatter, "channel `{id}` has an invalid radio model")
             }
             Self::ChannelNotConnected { device, channel } => write!(
                 formatter,
@@ -124,6 +134,8 @@ pub enum SimulationError {
     TimeInPast,
     /// A degraded channel state supplied an invalid rate.
     InvalidChannelState(ChannelId),
+    /// A runtime receiver-interference snapshot was invalid.
+    InvalidReceiverInterference(DeviceId),
     /// A simulated time calculation exceeded the supported range.
     TimeOverflow,
     /// No more packet identifiers are available.
@@ -140,6 +152,9 @@ impl fmt::Display for SimulationError {
             Self::TimeInPast => write!(formatter, "cannot schedule an event in the past"),
             Self::InvalidChannelState(id) => {
                 write!(formatter, "invalid state for channel `{id}`")
+            }
+            Self::InvalidReceiverInterference(id) => {
+                write!(formatter, "invalid receiver interference for device `{id}`")
             }
             Self::TimeOverflow => write!(formatter, "simulated time overflowed"),
             Self::PacketIdOverflow => write!(formatter, "packet identifier space exhausted"),

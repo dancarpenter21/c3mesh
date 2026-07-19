@@ -14,11 +14,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     egress: "link".into(),
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "sink".into(),
                 kind: DeviceKind::Sink,
                 mobility: Default::default(),
+                interference: vec![],
             },
         ],
         channels: vec![ChannelConfig {
@@ -28,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             propagation_delay_ns: 10_000_000,
             state: ChannelState::Operational,
             distance: None,
+            radio: None,
         }],
     };
 

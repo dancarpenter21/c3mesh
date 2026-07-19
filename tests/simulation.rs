@@ -15,11 +15,13 @@ fn direct_config(rate: u64, propagation_delay_ns: u64) -> NetworkConfig {
                     egress: "link".into(),
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "sink".into(),
                 kind: DeviceKind::Sink,
                 mobility: Default::default(),
+                interference: vec![],
             },
         ],
         channels: vec![ChannelConfig {
@@ -29,6 +31,7 @@ fn direct_config(rate: u64, propagation_delay_ns: u64) -> NetworkConfig {
             propagation_delay_ns,
             state: ChannelState::Operational,
             distance: None,
+            radio: None,
         }],
     }
 }
@@ -90,6 +93,7 @@ fn opposite_directions_serialize_independently() {
                     egress: "link".into(),
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "right".into(),
@@ -97,6 +101,7 @@ fn opposite_directions_serialize_independently() {
                     egress: "link".into(),
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
         ],
         channels: vec![ChannelConfig {
@@ -106,6 +111,7 @@ fn opposite_directions_serialize_independently() {
             propagation_delay_ns: 0,
             state: ChannelState::Operational,
             distance: None,
+            radio: None,
         }],
     };
     let mut simulator = Simulator::new(config).unwrap();
@@ -135,16 +141,19 @@ fn switch_forwards_only_after_complete_receive() {
                     egress: "in".into(),
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "switch".into(),
                 kind: DeviceKind::Switch { forwarding },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "sink".into(),
                 kind: DeviceKind::Sink,
                 mobility: Default::default(),
+                interference: vec![],
             },
         ],
         channels: vec![
@@ -155,6 +164,7 @@ fn switch_forwards_only_after_complete_receive() {
                 propagation_delay_ns: 10,
                 state: ChannelState::Operational,
                 distance: None,
+                radio: None,
             },
             ChannelConfig {
                 id: "out".into(),
@@ -163,6 +173,7 @@ fn switch_forwards_only_after_complete_receive() {
                 propagation_delay_ns: 10,
                 state: ChannelState::Operational,
                 distance: None,
+                radio: None,
             },
         ],
     };
@@ -378,6 +389,7 @@ fn routed_config(
                     egress: "in".into(),
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "router".into(),
@@ -386,11 +398,13 @@ fn routed_config(
                     default_route,
                 },
                 mobility: Default::default(),
+                interference: vec![],
             },
             DeviceConfig {
                 id: "sink".into(),
                 kind: DeviceKind::Sink,
                 mobility: Default::default(),
+                interference: vec![],
             },
         ],
         channels: vec![
@@ -401,6 +415,7 @@ fn routed_config(
                 propagation_delay_ns: 0,
                 state: ChannelState::Operational,
                 distance: None,
+                radio: None,
             },
             ChannelConfig {
                 id: "out".into(),
@@ -409,6 +424,7 @@ fn routed_config(
                 propagation_delay_ns: 0,
                 state: ChannelState::Operational,
                 distance: None,
+                radio: None,
             },
         ],
     }

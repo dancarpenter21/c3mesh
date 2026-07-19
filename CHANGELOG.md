@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in radio frequency bands and overlap-aware receiver interference.
+- Normalized jamming response with directional degradation and severing.
+- Initial, live, and scheduled interference snapshots for intermittent effects.
+- Directional transmission metrics and in-flight receiver-interference drops.
+- An intermittent jamming example and comprehensive usage/testing documentation.
+
 ## [0.1.0] - 2026-07-19
 
 ### Added

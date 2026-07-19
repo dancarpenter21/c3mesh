@@ -1,3 +1,4 @@
+use crate::FrequencyBand;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -206,6 +207,11 @@ pub enum DropReason {
         /// The channel whose endpoints could not communicate.
         channel: ChannelId,
     },
+    /// Receiver-side interference prevented successful reception.
+    ReceiverInterference {
+        /// The affected radio channel.
+        channel: ChannelId,
+    },
     /// A forwarding device had no matching rule.
     NoForwardingRule,
     /// The packet reached a sink other than its destination.
@@ -238,6 +244,8 @@ pub enum NetworkEvent {
         distance_mm: Option<u64>,
         /// Effective serialization rate selected for this transmission.
         effective_bit_rate_bps: u64,
+        /// Frequencies occupied by a wireless transmission.
+        frequency_band: Option<FrequencyBand>,
     },
     /// The complete packet arrived at the next device.
     DataReceived {
@@ -286,6 +294,29 @@ pub struct ChannelMetrics {
     /// Effective bit rate, or `None` when the channel is unavailable.
     pub effective_bit_rate_bps: Option<u64>,
     /// Whether the channel can accept a transmission at this time.
+    pub available: bool,
+}
+
+/// Directional link conditions for a prospective transmission.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransmissionMetrics {
+    /// Time at which the metrics were evaluated.
+    pub at: SimTime,
+    /// Device that would receive the transmission.
+    pub receiver: DeviceId,
+    /// Endpoint distance for a distance-aware channel, in meters.
+    pub distance_m: Option<f64>,
+    /// Total one-way propagation delay in nanoseconds.
+    pub propagation_delay_ns: u64,
+    /// Frequencies used by the channel, or `None` for a bandless channel.
+    pub frequency_band: Option<FrequencyBand>,
+    /// Aggregate normalized receiver interference after spectral overlap.
+    pub jammed: f64,
+    /// Effective rate before receiver interference is applied.
+    pub base_bit_rate_bps: Option<u64>,
+    /// Effective rate including receiver interference, or `None` if unavailable.
+    pub effective_bit_rate_bps: Option<u64>,
+    /// Whether this direction can begin a transmission at this time.
     pub available: bool,
 }
 

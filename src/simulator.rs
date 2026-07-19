@@ -1,7 +1,8 @@
 use crate::{
     ChannelConfig, ChannelId, ChannelMetrics, ChannelState, DeviceId, DeviceKind, DistanceChannel,
-    DistanceRateModel, DropReason, MobilityModel, NetworkConfig, NetworkEvent, Packet, PacketId,
-    Position3D, SimTime, SimulationError,
+    DistanceRateModel, DropReason, FrequencyBand, InterferenceResponse, MobilityModel,
+    NetworkConfig, NetworkEvent, Packet, PacketId, Position3D, RadioChannel, ReceiverInterference,
+    SimTime, SimulationError, TransmissionMetrics,
 };
 use std::collections::BTreeMap;
 
@@ -15,6 +16,7 @@ struct ChannelRuntime {
     propagation_delay_ns: u64,
     state: ChannelState,
     distance: Option<DistanceChannel>,
+    radio: Option<RadioChannel>,
     direction_available_ns: [u64; 2],
 }
 
@@ -26,6 +28,7 @@ impl From<ChannelConfig> for ChannelRuntime {
             propagation_delay_ns: value.propagation_delay_ns,
             state: value.state,
             distance: value.distance,
+            radio: value.radio,
             direction_available_ns: [0, 0],
         }
     }
@@ -35,6 +38,7 @@ impl From<ChannelConfig> for ChannelRuntime {
 struct DeviceRuntime {
     kind: DeviceKind,
     mobility: MobilityModel,
+    interference: BTreeMap<u64, Vec<ReceiverInterference>>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +50,9 @@ enum InternalEvent {
         channel: ChannelId,
         from: DeviceId,
         to: DeviceId,
+        base_bit_rate_bps: u64,
+        selected_bit_rate_bps: u64,
+        reception_start_ns: u64,
     },
 }
 
@@ -73,6 +80,7 @@ impl Simulator {
                     DeviceRuntime {
                         kind: device.kind,
                         mobility: device.mobility,
+                        interference: BTreeMap::from([(0, device.interference)]),
                     },
                 )
             })
@@ -168,6 +176,110 @@ impl Simulator {
             effective_bit_rate_bps,
             available: effective_bit_rate_bps.is_some(),
         })
+    }
+
+    /// Evaluates directional channel and receiver-interference conditions.
+    pub fn transmission_metrics_at(
+        &self,
+        channel: impl Into<ChannelId>,
+        from: impl Into<DeviceId>,
+        at: SimTime,
+    ) -> Result<TransmissionMetrics, SimulationError> {
+        let channel_id = channel.into();
+        let from = from.into();
+        let runtime = self
+            .channels
+            .get(&channel_id)
+            .ok_or_else(|| SimulationError::UnknownChannel(channel_id.clone()))?;
+        let receiver = if runtime.endpoints[0] == from {
+            runtime.endpoints[1].clone()
+        } else if runtime.endpoints[1] == from {
+            runtime.endpoints[0].clone()
+        } else {
+            return Err(SimulationError::InvalidConfig(
+                crate::ConfigError::ChannelNotConnected {
+                    device: from,
+                    channel: channel_id,
+                },
+            ));
+        };
+        let base = self.channel_metrics_at(channel_id, at)?;
+        let (frequency_band, jammed, effective_bit_rate_bps) = if let Some(radio) = runtime.radio {
+            let interference = self.receiver_interference_at(receiver.clone(), at)?;
+            let jammed = aggregate_jammed(&interference, radio.band);
+            let effective = base
+                .effective_bit_rate_bps
+                .and_then(|rate| interference_rate_bps(rate, radio.interference_response, jammed));
+            (Some(radio.band), jammed, effective)
+        } else {
+            (None, 0.0, base.effective_bit_rate_bps)
+        };
+        Ok(TransmissionMetrics {
+            at,
+            receiver,
+            distance_m: base.distance_m,
+            propagation_delay_ns: base.propagation_delay_ns,
+            frequency_band,
+            jammed,
+            base_bit_rate_bps: base.effective_bit_rate_bps,
+            effective_bit_rate_bps,
+            available: effective_bit_rate_bps.is_some(),
+        })
+    }
+
+    /// Returns a receiver's interference snapshot at a virtual time.
+    pub fn receiver_interference_at(
+        &self,
+        receiver: impl Into<DeviceId>,
+        at: SimTime,
+    ) -> Result<Vec<ReceiverInterference>, SimulationError> {
+        let receiver = receiver.into();
+        let runtime = self
+            .devices
+            .get(&receiver)
+            .ok_or_else(|| SimulationError::UnknownDevice(receiver.clone()))?;
+        Ok(runtime
+            .interference
+            .range(..=at.as_nanos())
+            .next_back()
+            .map_or_else(Vec::new, |(_, snapshot)| snapshot.clone()))
+    }
+
+    /// Replaces a receiver's interference snapshot at the current virtual time.
+    pub fn set_receiver_interference(
+        &mut self,
+        receiver: impl Into<DeviceId>,
+        snapshot: Vec<ReceiverInterference>,
+    ) -> Result<(), SimulationError> {
+        self.schedule_receiver_interference(self.now, receiver, snapshot)
+    }
+
+    /// Schedules a persistent receiver-interference snapshot.
+    ///
+    /// A later call for the same receiver and timestamp replaces the earlier
+    /// snapshot. An empty snapshot clears all receiver interference.
+    pub fn schedule_receiver_interference(
+        &mut self,
+        at: SimTime,
+        receiver: impl Into<DeviceId>,
+        snapshot: Vec<ReceiverInterference>,
+    ) -> Result<(), SimulationError> {
+        if at < self.now {
+            return Err(SimulationError::TimeInPast);
+        }
+        let receiver = receiver.into();
+        if !self.devices.contains_key(&receiver) {
+            return Err(SimulationError::UnknownDevice(receiver));
+        }
+        if !valid_receiver_interference(&snapshot) {
+            return Err(SimulationError::InvalidReceiverInterference(receiver));
+        }
+        let runtime = self
+            .devices
+            .get_mut(&receiver)
+            .expect("checked receiver must remain present");
+        runtime.interference.insert(at.as_nanos(), snapshot);
+        Ok(())
     }
 
     /// Originates a packet at the current virtual time with a default hop limit.
@@ -270,7 +382,25 @@ impl Simulator {
                     channel,
                     from,
                     to,
+                    base_bit_rate_bps,
+                    selected_bit_rate_bps,
+                    reception_start_ns,
                 } => {
+                    if !self.reception_supported(
+                        &to,
+                        &channel,
+                        reception_start_ns,
+                        time_ns,
+                        base_bit_rate_bps,
+                        selected_bit_rate_bps,
+                    )? {
+                        return Ok(Some(NetworkEvent::PacketDropped {
+                            at: self.now,
+                            packet,
+                            device: to,
+                            reason: DropReason::ReceiverInterference { channel },
+                        }));
+                    }
                     self.handle_receive(&packet, &to)?;
                     return Ok(Some(NetworkEvent::DataReceived {
                         at: self.now,
@@ -302,6 +432,39 @@ impl Simulator {
             callback(&event);
         }
         Ok(())
+    }
+
+    fn reception_supported(
+        &self,
+        receiver: &DeviceId,
+        channel: &ChannelId,
+        reception_start_ns: u64,
+        receive_ns: u64,
+        base_bit_rate_bps: u64,
+        selected_bit_rate_bps: u64,
+    ) -> Result<bool, SimulationError> {
+        let Some(radio) = self
+            .channels
+            .get(channel)
+            .ok_or_else(|| SimulationError::UnknownChannel(channel.clone()))?
+            .radio
+        else {
+            return Ok(true);
+        };
+        let runtime = self
+            .devices
+            .get(receiver)
+            .ok_or_else(|| SimulationError::UnknownDevice(receiver.clone()))?;
+        let peak = peak_jammed(
+            &runtime.interference,
+            radio.band,
+            reception_start_ns,
+            receive_ns,
+        );
+        Ok(
+            interference_rate_bps(base_bit_rate_bps, radio.interference_response, peak)
+                .is_some_and(|supported| supported >= selected_bit_rate_bps),
+        )
     }
 
     fn handle_receive(
@@ -395,8 +558,8 @@ impl Simulator {
             .max(runtime.direction_available_ns[direction]);
         let start = SimTime::from_nanos(start_ns);
         let state = runtime.state;
-        let metrics = self.channel_metrics_at(channel_id.clone(), start)?;
-        let Some(rate) = metrics.effective_bit_rate_bps else {
+        let metrics = self.transmission_metrics_at(channel_id.clone(), from.clone(), start)?;
+        let Some(base_rate) = metrics.base_bit_rate_bps else {
             let reason = if state == ChannelState::Severed {
                 DropReason::ChannelSevered {
                     channel: channel_id,
@@ -408,12 +571,25 @@ impl Simulator {
             };
             return self.drop_at(start, packet, from, reason);
         };
+        let Some(rate) = metrics.effective_bit_rate_bps else {
+            return self.drop_at(
+                start,
+                packet,
+                to,
+                DropReason::ReceiverInterference {
+                    channel: channel_id,
+                },
+            );
+        };
 
         let serialization_ns = serialization_time_ns(packet.payload().len(), rate)?;
         let serialization_end_ns = start_ns
             .checked_add(serialization_ns)
             .ok_or(SimulationError::TimeOverflow)?;
         let receive_ns = serialization_end_ns
+            .checked_add(metrics.propagation_delay_ns)
+            .ok_or(SimulationError::TimeOverflow)?;
+        let reception_start_ns = start_ns
             .checked_add(metrics.propagation_delay_ns)
             .ok_or(SimulationError::TimeOverflow)?;
         self.channels
@@ -436,6 +612,7 @@ impl Simulator {
                     .map(distance_to_millimeters)
                     .transpose()?,
                 effective_bit_rate_bps: rate,
+                frequency_band: metrics.frequency_band,
             }),
         )?;
         self.enqueue(
@@ -445,6 +622,9 @@ impl Simulator {
                 channel: channel_id,
                 from,
                 to,
+                base_bit_rate_bps: base_rate,
+                selected_bit_rate_bps: rate,
+                reception_start_ns,
             },
         )
     }
@@ -489,6 +669,69 @@ impl Simulator {
         self.queue.insert((time_ns, sequence), event);
         Ok(())
     }
+}
+
+fn valid_receiver_interference(snapshot: &[ReceiverInterference]) -> bool {
+    snapshot.iter().all(|interference| {
+        interference.band.is_valid()
+            && interference.jammed.is_finite()
+            && (0.0..=1.0).contains(&interference.jammed)
+    })
+}
+
+fn aggregate_jammed(snapshot: &[ReceiverInterference], victim: FrequencyBand) -> f64 {
+    let victim_width = (victim.upper_hz - victim.lower_hz) as f64;
+    snapshot
+        .iter()
+        .map(|interference| {
+            let lower = victim.lower_hz.max(interference.band.lower_hz);
+            let upper = victim.upper_hz.min(interference.band.upper_hz);
+            if lower >= upper {
+                0.0
+            } else {
+                interference.jammed * (upper - lower) as f64 / victim_width
+            }
+        })
+        .sum::<f64>()
+        .min(1.0)
+}
+
+fn interference_rate_bps(
+    base_rate: u64,
+    response: InterferenceResponse,
+    jammed: f64,
+) -> Option<u64> {
+    if jammed <= response.unaffected_below {
+        return Some(base_rate);
+    }
+    if jammed >= response.severed_at {
+        return None;
+    }
+    let fraction =
+        (response.severed_at - jammed) / (response.severed_at - response.unaffected_below);
+    Some(((base_rate as f64 * fraction).floor() as u64).clamp(1, base_rate))
+}
+
+fn peak_jammed(
+    timeline: &BTreeMap<u64, Vec<ReceiverInterference>>,
+    victim: FrequencyBand,
+    start_ns: u64,
+    end_ns: u64,
+) -> f64 {
+    let mut peak = timeline
+        .range(..=start_ns)
+        .next_back()
+        .map_or(0.0, |(_, snapshot)| aggregate_jammed(snapshot, victim));
+    if start_ns == end_ns {
+        return peak;
+    }
+    for (_, snapshot) in timeline.range((
+        std::ops::Bound::Excluded(start_ns),
+        std::ops::Bound::Excluded(end_ns),
+    )) {
+        peak = peak.max(aggregate_jammed(snapshot, victim));
+    }
+    peak
 }
 
 fn distance_rate_bps(nominal_rate: u64, model: &DistanceChannel, distance_m: f64) -> u64 {

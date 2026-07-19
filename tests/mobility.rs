@@ -205,6 +205,7 @@ fn moving_config() -> NetworkConfig {
                     velocity_mps: Velocity3D::new(100.0, 0.0, 0.0),
                     epoch_ns: 0,
                 },
+                interference: vec![],
             },
             DeviceConfig {
                 id: "station".into(),
@@ -212,6 +213,7 @@ fn moving_config() -> NetworkConfig {
                 mobility: MobilityModel::Static {
                     position: Position3D::ORIGIN,
                 },
+                interference: vec![],
             },
         ],
         channels: vec![ChannelConfig {
@@ -228,6 +230,7 @@ fn moving_config() -> NetworkConfig {
                     minimum_bit_rate_bps: 4_000_000,
                 },
             }),
+            radio: None,
         }],
     }
 }

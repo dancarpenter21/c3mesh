@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     velocity_mps: Velocity3D::new(-150.0, 0.0, 0.0),
                     epoch_ns: 0,
                 },
+                interference: vec![],
             },
             DeviceConfig {
                 id: "ground_station".into(),
@@ -25,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 mobility: MobilityModel::Static {
                     position: Position3D::ORIGIN,
                 },
+                interference: vec![],
             },
         ],
         channels: vec![ChannelConfig {
@@ -41,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     minimum_bit_rate_bps: 1_000_000,
                 },
             }),
+            radio: None,
         }],
     };
 

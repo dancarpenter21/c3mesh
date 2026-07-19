@@ -25,6 +25,7 @@ impl NetworkConfig {
                 return Err(ConfigError::DuplicateDevice(device.id.clone()));
             }
             validate_mobility(device)?;
+            validate_receiver_interference(device)?;
         }
 
         let mut channels = BTreeMap::new();
@@ -56,6 +57,9 @@ impl NetworkConfig {
             }
             if let Some(distance) = &channel.distance {
                 validate_distance_model(channel, distance)?;
+            }
+            if let Some(radio) = &channel.radio {
+                validate_radio(channel, radio)?;
             }
         }
 
@@ -144,6 +148,9 @@ pub struct DeviceConfig {
     /// The device's position and movement over virtual time.
     #[serde(default)]
     pub mobility: MobilityModel,
+    /// Initial receiver-side interference conditions at simulation time zero.
+    #[serde(default)]
+    pub interference: Vec<ReceiverInterference>,
 }
 
 /// The fundamental behavior assigned to a device.
@@ -194,6 +201,67 @@ pub struct ChannelConfig {
     /// Optional distance-derived propagation, range, and rate behavior.
     #[serde(default)]
     pub distance: Option<DistanceChannel>,
+    /// Optional spectrum and interference response for a wireless channel.
+    #[serde(default)]
+    pub radio: Option<RadioChannel>,
+}
+
+/// A half-open radio-frequency interval, `[lower_hz, upper_hz)`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FrequencyBand {
+    /// Inclusive lower frequency in hertz.
+    pub lower_hz: u64,
+    /// Exclusive upper frequency in hertz.
+    pub upper_hz: u64,
+}
+
+impl FrequencyBand {
+    /// Creates a half-open frequency band.
+    #[must_use]
+    pub const fn new(lower_hz: u64, upper_hz: u64) -> Self {
+        Self { lower_hz, upper_hz }
+    }
+
+    pub(crate) const fn is_valid(self) -> bool {
+        self.lower_hz < self.upper_hz
+    }
+}
+
+/// Receiver-side interference over a frequency band.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ReceiverInterference {
+    /// Frequencies occupied by this interference contribution.
+    pub band: FrequencyBand,
+    /// Normalized severity from `0.0` (none) to `1.0` (maximum).
+    pub jammed: f64,
+}
+
+/// Wireless behavior attached to a point-to-point channel.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct RadioChannel {
+    /// Frequencies occupied by transmissions on this channel.
+    pub band: FrequencyBand,
+    /// Mapping from aggregate receiver interference to supported bitrate.
+    #[serde(default)]
+    pub interference_response: InterferenceResponse,
+}
+
+/// Linear mapping from normalized interference to radio-link health.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct InterferenceResponse {
+    /// Aggregate magnitude at or below which the full base rate is supported.
+    pub unaffected_below: f64,
+    /// Aggregate magnitude at or above which the link is severed.
+    pub severed_at: f64,
+}
+
+impl Default for InterferenceResponse {
+    fn default() -> Self {
+        Self {
+            unaffected_below: 0.0,
+            severed_at: 1.0,
+        }
+    }
 }
 
 /// The operating state of a channel.
@@ -267,6 +335,18 @@ fn validate_mobility(device: &DeviceConfig) -> Result<(), ConfigError> {
     }
 }
 
+fn validate_receiver_interference(device: &DeviceConfig) -> Result<(), ConfigError> {
+    if device.interference.iter().all(|interference| {
+        interference.band.is_valid()
+            && interference.jammed.is_finite()
+            && (0.0..=1.0).contains(&interference.jammed)
+    }) {
+        Ok(())
+    } else {
+        Err(ConfigError::InvalidReceiverInterference(device.id.clone()))
+    }
+}
+
 fn validate_distance_model(
     channel: &ChannelConfig,
     distance: &DistanceChannel,
@@ -292,5 +372,20 @@ fn validate_distance_model(
         Ok(())
     } else {
         Err(ConfigError::InvalidDistanceModel(channel.id.clone()))
+    }
+}
+
+fn validate_radio(channel: &ChannelConfig, radio: &RadioChannel) -> Result<(), ConfigError> {
+    let response = radio.interference_response;
+    let valid = radio.band.is_valid()
+        && response.unaffected_below.is_finite()
+        && response.severed_at.is_finite()
+        && response.unaffected_below >= 0.0
+        && response.unaffected_below < response.severed_at
+        && response.severed_at <= 1.0;
+    if valid {
+        Ok(())
+    } else {
+        Err(ConfigError::InvalidRadio(channel.id.clone()))
     }
 }
