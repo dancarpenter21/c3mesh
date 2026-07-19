@@ -1,12 +1,12 @@
 [package]
-name = "comms-sim"
+name = "c3mesh"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Deterministic discrete-event simulation for fixed and mobile communication networks"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-documentation = "https://docs.rs/comms-sim"
+documentation = "https://docs.rs/c3mesh"
 keywords = ["network", "simulation", "mobility", "communications", "discrete-event"]
 categories = ["network-programming", "simulation"]
 include = [

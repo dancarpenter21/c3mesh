@@ -1,6 +1,6 @@
 //! Demonstrates timing a direct source-to-sink transmission.
 
-use comms_sim::{
+use c3mesh::{
     ChannelConfig, ChannelState, DeviceConfig, DeviceId, DeviceKind, NetworkConfig, NetworkEvent,
     SimTime, Simulator,
 };

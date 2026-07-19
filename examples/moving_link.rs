@@ -1,6 +1,6 @@
 //! Demonstrates a moving aircraft communicating with a stationary ground site.
 
-use comms_sim::{
+use c3mesh::{
     ChannelConfig, ChannelState, DeviceConfig, DeviceKind, DistanceChannel, DistanceRateModel,
     MobilityModel, NetworkConfig, NetworkEvent, Position3D, SimTime, Simulator, Velocity3D,
 };

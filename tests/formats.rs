@@ -1,7 +1,7 @@
 //! Feature-gated tests for serialized topology formats.
 
 #[cfg(any(feature = "json", feature = "yaml"))]
-use comms_sim::NetworkConfig;
+use c3mesh::NetworkConfig;
 
 #[cfg(feature = "json")]
 #[test]

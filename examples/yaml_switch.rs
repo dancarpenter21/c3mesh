@@ -1,6 +1,6 @@
 //! Demonstrates loading a statically forwarded switched topology from YAML.
 
-use comms_sim::{NetworkConfig, NetworkEvent, Simulator};
+use c3mesh::{NetworkConfig, NetworkEvent, Simulator};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = NetworkConfig::from_yaml_str(include_str!("data/switched.yaml"))?;

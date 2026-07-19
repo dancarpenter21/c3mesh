@@ -1,6 +1,6 @@
 //! Behavioral tests for moving devices and distance-aware channels.
 
-use comms_sim::{
+use c3mesh::{
     ChannelConfig, ChannelState, ConfigError, DeviceConfig, DeviceKind, DistanceChannel,
     DistanceRateModel, DropReason, MobilityModel, NetworkConfig, NetworkEvent, Position3D, SimTime,
     Simulator, Velocity3D, Waypoint,

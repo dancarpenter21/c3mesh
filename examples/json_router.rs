@@ -1,6 +1,6 @@
 //! Demonstrates loading a routed topology from JSON.
 
-use comms_sim::{NetworkConfig, NetworkEvent, Simulator};
+use c3mesh::{NetworkConfig, NetworkEvent, Simulator};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = NetworkConfig::from_json_str(include_str!("data/routed.json"))?;

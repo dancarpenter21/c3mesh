@@ -1,6 +1,6 @@
 //! End-to-end behavioral tests for the simulator.
 
-use comms_sim::{
+use c3mesh::{
     ChannelConfig, ChannelState, ConfigError, DeviceConfig, DeviceId, DeviceKind, DropReason,
     NetworkConfig, NetworkEvent, SimTime, SimulationError, Simulator,
 };
@@ -367,8 +367,8 @@ fn checked_timing_reports_overflow() {
 }
 
 fn routed_config(
-    routes: BTreeMap<DeviceId, comms_sim::ChannelId>,
-    default_route: Option<comms_sim::ChannelId>,
+    routes: BTreeMap<DeviceId, c3mesh::ChannelId>,
+    default_route: Option<c3mesh::ChannelId>,
 ) -> NetworkConfig {
     NetworkConfig {
         devices: vec![

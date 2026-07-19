@@ -1,6 +1,6 @@
-# comms-sim
+# c3mesh
 
-`comms-sim` is a deterministic, discrete-event Rust library for modeling how
+`c3mesh` is a deterministic, discrete-event Rust library for modeling how
 long packets take to move through fixed and mobile communication networks. It
 accounts for serialization rate, distance, propagation delay, channel
 availability, and store-and-forward behavior without sleeping or depending on
@@ -19,7 +19,7 @@ independently in FIFO order and may be operational, degraded, or severed.
 ## Quick start
 
 ```rust
-use comms_sim::{
+use c3mesh::{
     ChannelConfig, ChannelState, DeviceConfig, DeviceKind, NetworkConfig,
     NetworkEvent, SimTime, Simulator,
 };
@@ -95,7 +95,7 @@ Convenience loaders are available through optional features:
 
 ```toml
 [dependencies]
-comms-sim = { version = "0.1", features = ["json", "yaml"] }
+c3mesh = { version = "0.1", features = ["json", "yaml"] }
 ```
 
 Device variants use a `kind` tag. For example:
@@ -161,7 +161,7 @@ Add `DistanceChannel` to a channel to derive propagation delay, range, and
 bitrate from the endpoint positions:
 
 ```rust
-use comms_sim::{DistanceChannel, DistanceRateModel};
+use c3mesh::{DistanceChannel, DistanceRateModel};
 
 let radio = DistanceChannel {
     propagation_speed_mps: 299_792_458.0,
@@ -205,7 +205,7 @@ mutually exclusive built-in variants.
 
 ## Minimum supported Rust version
 
-`comms-sim` requires Rust 1.85 or newer.
+`c3mesh` requires Rust 1.85 or newer.
 
 ## License
 
