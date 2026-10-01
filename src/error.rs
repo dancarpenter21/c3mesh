@@ -29,6 +29,8 @@ pub enum ConfigError {
     InvalidDistanceModel(ChannelId),
     /// A channel has an invalid radio band or interference response.
     InvalidRadio(ChannelId),
+    /// A channel override has invalid queue, MTU, loss, medium, or weight values.
+    InvalidSimulatorOptions(String),
     /// A device selected a channel to which it is not connected.
     ChannelNotConnected {
         /// The device selecting the channel.
@@ -66,6 +68,10 @@ impl fmt::Display for ConfigError {
             Self::InvalidRadio(id) => {
                 write!(formatter, "channel `{id}` has an invalid radio model")
             }
+            Self::InvalidSimulatorOptions(id) => write!(
+                formatter,
+                "channel `{id}` has invalid packet-engine options"
+            ),
             Self::ChannelNotConnected { device, channel } => write!(
                 formatter,
                 "channel `{channel}` is not connected to device `{device}`"

@@ -87,9 +87,116 @@ Events can be observed in three ways:
 - `Simulator::step` advances to one observable event.
 - `Simulator::run` returns all remaining events in deterministic order.
 - `Simulator::run_with` invokes a callback as each event occurs.
+- `Simulator::advance_to` processes every event through an inclusive tick boundary,
+  retains future events, and advances idle virtual time without overshooting.
 
 All time is virtual and measured in integer nanoseconds. Runs perform no
 wall-clock sleeping and are deterministic for a given topology and send order.
+
+
+## Packet engine and tick integration
+
+Use `Simulator::new_with_options` to configure a channel's packet engine
+without changing the topology schema. An explicit channel entry enables a live
+waiting queue. `Simulator::new` and channels without entries preserve the
+original full-duplex FIFO reservation behavior. Sending nondefault
+`PacketMetadata` also enables live queueing on the traversed channels; existing
+wire reservations remain intact.
+
+```rust
+use c3mesh::{
+    ChannelOptions, NetworkConfig, PacketMetadata, QueueConfig, QueueDiscipline,
+    SimTime, Simulator, SimulatorOptions,
+};
+use std::collections::BTreeMap;
+
+# fn example(network: NetworkConfig) -> Result<(), c3mesh::SimulationError> {
+let options = SimulatorOptions {
+    seed: 42,
+    channels: BTreeMap::from([("link".into(), ChannelOptions {
+        mtu_bytes: Some(1_500),
+        wire_overhead_bytes: 28,
+        queue: QueueConfig {
+            max_packets: Some(64),
+            max_bytes: Some(96_000),
+            discipline: QueueDiscipline::StrictPriority,
+        },
+        shared_medium: Some("command-radio".into()),
+        loss_basis_points: 100, // 1 percent, deterministic for this seed.
+        ..Default::default()
+    })]),
+};
+let mut simulator = Simulator::new_with_options(network, options)?;
+simulator.schedule_send_with_metadata(
+    SimTime::ZERO, "sender", "receiver", b"move".to_vec(),
+    PacketMetadata {
+        priority: 230,
+        traffic_class: 1,
+        flow_id: 7,
+        expires_at: Some(SimTime::from_nanos(1_000_000_000)),
+    },
+)?;
+let events = simulator.advance_to(SimTime::from_nanos(50_000_000))?;
+let waiting = simulator.channel_queue_metrics("link")?;
+# let _ = (events, waiting);
+# Ok(())
+# }
+```
+
+Queue bounds apply **per direction** to waiting packets and their full wire
+size, excluding packets already serializing or propagating. An idle serializer
+starts its first admitted packet immediately. FIFO and weighted-fair queues
+drop the arriving packet when full. Strict priority can evict lower-priority
+waiting packets to admit a higher-priority packet; it preserves older packets
+on equal-priority eviction ties and never partially evicts if the arrival still
+cannot fit. Packets already on the wire are never preempted.
+
+Scheduling policies select from the queue when serialization becomes available:
+
+- `fifo` preserves admission order.
+- `strict_priority` serves larger priority values first, with FIFO ties.
+- `weighted_fair` serves by integer virtual finish time. A flow is identified
+  by source, traffic class, and endpoint-assigned flow ID. Service cost uses
+  wire bytes divided by the positive class weight; unspecified weights are one.
+  Each flow retains its packet order. Assign stable flow IDs rather than a
+  new ID for each packet when modeling sustained traffic.
+
+A channel's MTU includes modeled overhead. Oversized packets produce
+`DropReason::MtuExceeded`; they are not fragmented. Overflow produces
+`QueueOverflow`. Channel state, mobility, and receiver interference are
+evaluated at the queued packet's actual wire start, so changes during its wait
+affect it. Existing in-flight reception checks continue to apply.
+
+Channels with the same `shared_medium` ID share one serialization resource,
+including opposite directions. Propagation does not occupy the resource.
+Simultaneous contenders resolve deterministically in event order. Channels
+with different IDs, and ordinary full-duplex channels, remain independent.
+
+Loss is specified in basis points from 0 through 10,000. Loss decisions use a
+stable integer hash of seed, packet identity, channel identity, and hop budget;
+they are independent of tick size. Lost packets consume wire time and produce
+`ChannelLoss` at the scheduled receive time, without a receive or delivery
+event.
+
+An expiry timestamp is an **exclusive** deadline. A packet already expired at
+injection is dropped immediately. Waiting packets expire at their deadline and
+release capacity, including when a deadline precedes an existing queue wakeup.
+An in-flight packet whose arrival is at or after its deadline produces
+`Expired` at arrival and does not forward or deliver. Endpoint metadata follows
+the packet through routers unchanged; routers never inspect application payloads.
+
+`advance_to(boundary)` returns all events at or before that boundary, including
+forwarding and delivery events generated at the boundary itself. It processes
+no later internal events, rejects backwards movement, and sets idle time to
+the boundary. Keep queued packets pending between game ticks instead of using
+`run` to complete future deliveries synchronously.
+
+Run the congestion example and focused tests:
+
+```console
+cargo run --example bounded_queues
+cargo test --test packet_engine --all-features
+```
 
 ## Serialized topologies
 
@@ -405,11 +512,13 @@ and [NTIA interference assessment](https://www.ntia.gov/sites/default/files/publ
 
 ## Model boundaries
 
-Version 0.1 models point-to-point links and abstract packets whose transmitted
-size is their payload length. It does not synthesize protocol headers or model
-Ethernet/IP details, dynamic routing, switch learning, multicast, random loss,
-wireless contention, obstruction, or device processing delay. Device roles are
-mutually exclusive built-in variants.
+Packets remain abstract byte payloads. Optional wire overhead contributes to
+serialization, queue capacity, and MTU checks; the engine does not synthesize
+protocol headers. Shared media model deterministic serialization contention,
+without collisions, carrier sensing, retransmission, or physical RF contention.
+There is no automatic fragmentation, dynamic routing, switch learning,
+multicast, obstruction, or device processing delay. Device roles are mutually
+exclusive built-in variants.
 
 ## Minimum supported Rust version
 

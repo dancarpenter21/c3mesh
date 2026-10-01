@@ -1,10 +1,13 @@
+use crate::packet_queue::PacketQueue;
 use crate::{
     ChannelConfig, ChannelId, ChannelMetrics, ChannelState, DeviceId, DeviceKind, DistanceChannel,
     DistanceRateModel, DropReason, FrequencyBand, InterferenceResponse, MobilityModel,
-    NetworkConfig, NetworkEvent, Packet, PacketId, Position3D, RadioChannel, ReceiverInterference,
-    SimTime, SimulationError, TransmissionMetrics,
+    NetworkConfig, NetworkEvent, Packet, PacketId, PacketMetadata, Position3D, RadioChannel,
+    ReceiverInterference, SimTime, SimulationError, SimulatorOptions, TransmissionMetrics,
 };
 use std::collections::BTreeMap;
+
+mod scheduler;
 
 const DEFAULT_HOP_LIMIT: u16 = 64;
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
@@ -18,6 +21,8 @@ struct ChannelRuntime {
     distance: Option<DistanceChannel>,
     radio: Option<RadioChannel>,
     direction_available_ns: [u64; 2],
+    waiting: [PacketQueue; 2],
+    packet_engine: bool,
 }
 
 impl From<ChannelConfig> for ChannelRuntime {
@@ -30,6 +35,8 @@ impl From<ChannelConfig> for ChannelRuntime {
             distance: value.distance,
             radio: value.radio,
             direction_available_ns: [0, 0],
+            waiting: Default::default(),
+            packet_engine: false,
         }
     }
 }
@@ -44,6 +51,10 @@ struct DeviceRuntime {
 #[derive(Clone, Debug)]
 enum InternalEvent {
     Inject(Packet),
+    Drain {
+        channel: ChannelId,
+        direction: usize,
+    },
     Emit(NetworkEvent),
     Receive {
         packet: Packet,
@@ -53,6 +64,7 @@ enum InternalEvent {
         base_bit_rate_bps: u64,
         selected_bit_rate_bps: u64,
         reception_start_ns: u64,
+        lost: bool,
     },
 }
 
@@ -65,12 +77,24 @@ pub struct Simulator {
     now: SimTime,
     next_sequence: u64,
     next_packet_id: u64,
+    options: SimulatorOptions,
+    queue_wakes: BTreeMap<(ChannelId, usize), u64>,
+    shared_medium_available: BTreeMap<String, u64>,
 }
 
 impl Simulator {
     /// Creates a simulator after validating the supplied topology.
     pub fn new(config: NetworkConfig) -> Result<Self, SimulationError> {
+        Self::new_with_options(config, SimulatorOptions::default())
+    }
+
+    /// Creates a simulator with validated packet-engine channel options.
+    pub fn new_with_options(
+        config: NetworkConfig,
+        options: SimulatorOptions,
+    ) -> Result<Self, SimulationError> {
         config.validate()?;
+        options.validate(&config)?;
         let devices = config
             .devices
             .into_iter()
@@ -88,7 +112,12 @@ impl Simulator {
         let channels = config
             .channels
             .into_iter()
-            .map(|channel| (channel.id.clone(), channel.into()))
+            .map(|channel| {
+                let id = channel.id.clone();
+                let mut runtime = ChannelRuntime::from(channel);
+                runtime.packet_engine = options.channels.contains_key(&id);
+                (id, runtime)
+            })
             .collect();
         Ok(Self {
             devices,
@@ -97,6 +126,9 @@ impl Simulator {
             now: SimTime::ZERO,
             next_sequence: 0,
             next_packet_id: 0,
+            options,
+            queue_wakes: BTreeMap::new(),
+            shared_medium_available: BTreeMap::new(),
         })
     }
 
@@ -312,6 +344,45 @@ impl Simulator {
         payload: impl Into<Vec<u8>>,
         hop_limit: u16,
     ) -> Result<PacketId, SimulationError> {
+        self.schedule_send_with_hop_limit_and_metadata(
+            at,
+            source,
+            destination,
+            payload,
+            hop_limit,
+            PacketMetadata::default(),
+        )
+    }
+
+    /// Schedules a packet with explicit endpoint-supplied scheduling metadata.
+    pub fn schedule_send_with_metadata(
+        &mut self,
+        at: SimTime,
+        source: impl Into<DeviceId>,
+        destination: impl Into<DeviceId>,
+        payload: impl Into<Vec<u8>>,
+        metadata: PacketMetadata,
+    ) -> Result<PacketId, SimulationError> {
+        self.schedule_send_with_hop_limit_and_metadata(
+            at,
+            source,
+            destination,
+            payload,
+            DEFAULT_HOP_LIMIT,
+            metadata,
+        )
+    }
+
+    /// Schedules a packet with both an explicit hop limit and scheduling metadata.
+    pub fn schedule_send_with_hop_limit_and_metadata(
+        &mut self,
+        at: SimTime,
+        source: impl Into<DeviceId>,
+        destination: impl Into<DeviceId>,
+        payload: impl Into<Vec<u8>>,
+        hop_limit: u16,
+        metadata: PacketMetadata,
+    ) -> Result<PacketId, SimulationError> {
         if at < self.now {
             return Err(SimulationError::TimeInPast);
         }
@@ -331,7 +402,7 @@ impl Simulator {
             .next_packet_id
             .checked_add(1)
             .ok_or(SimulationError::PacketIdOverflow)?;
-        let packet = Packet::new(id, source, destination, payload.into(), hop_limit);
+        let packet = Packet::new(id, source, destination, payload.into(), hop_limit, metadata);
         self.enqueue(at.as_nanos(), InternalEvent::Inject(packet))?;
         Ok(id)
     }
@@ -362,13 +433,51 @@ impl Simulator {
 
     /// Advances until the next observable event, or returns `None` when idle.
     pub fn step(&mut self) -> Result<Option<NetworkEvent>, SimulationError> {
+        self.step_until(None)
+    }
+
+    /// Processes all events through an inclusive boundary and sets the current time.
+    ///
+    /// Future internal and observable events remain pending. Moving backwards fails.
+    pub fn advance_to(&mut self, boundary: SimTime) -> Result<Vec<NetworkEvent>, SimulationError> {
+        if boundary < self.now {
+            return Err(SimulationError::TimeInPast);
+        }
+        let mut events = Vec::new();
+        while let Some(event) = self.step_until(Some(boundary))? {
+            events.push(event);
+        }
+        self.now = boundary;
+        Ok(events)
+    }
+
+    fn step_until(
+        &mut self,
+        boundary: Option<SimTime>,
+    ) -> Result<Option<NetworkEvent>, SimulationError> {
         loop {
+            if let Some(limit) = boundary {
+                if self
+                    .queue
+                    .first_key_value()
+                    .is_none_or(|((time, _), _)| *time > limit.as_nanos())
+                {
+                    return Ok(None);
+                }
+            }
             let Some(((time_ns, _), internal)) = self.queue.pop_first() else {
                 return Ok(None);
             };
             self.now = SimTime::from_nanos(time_ns);
             match internal {
                 InternalEvent::Emit(event) => return Ok(Some(event)),
+                InternalEvent::Drain { channel, direction } => {
+                    let key = (channel.clone(), direction);
+                    if self.queue_wakes.get(&key) == Some(&time_ns) {
+                        self.queue_wakes.remove(&key);
+                        self.drain_channel(channel, direction)?;
+                    }
+                }
                 InternalEvent::Inject(packet) => {
                     let source = packet.source().clone();
                     let egress = match self.devices.get(&source).map(|device| &device.kind) {
@@ -385,7 +494,25 @@ impl Simulator {
                     base_bit_rate_bps,
                     selected_bit_rate_bps,
                     reception_start_ns,
+                    lost,
                 } => {
+                    let failure = if packet.expired_at(self.now) {
+                        Some(DropReason::Expired)
+                    } else if lost {
+                        Some(DropReason::ChannelLoss {
+                            channel: channel.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = failure {
+                        return Ok(Some(NetworkEvent::PacketDropped {
+                            at: self.now,
+                            packet,
+                            device: to,
+                            reason,
+                        }));
+                    }
                     if !self.reception_supported(
                         &to,
                         &channel,
@@ -535,6 +662,27 @@ impl Simulator {
         from: DeviceId,
         channel_id: ChannelId,
     ) -> Result<(), SimulationError> {
+        if packet.expired_at(self.now) {
+            return self.drop_now(packet, from, DropReason::Expired);
+        }
+        let runtime = self
+            .channels
+            .get_mut(&channel_id)
+            .ok_or_else(|| SimulationError::UnknownChannel(channel_id.clone()))?;
+        runtime.packet_engine |= !packet.metadata().is_default();
+        if runtime.packet_engine {
+            self.queue_transmission(packet, from, channel_id)
+        } else {
+            self.request_legacy_transmission(packet, from, channel_id)
+        }
+    }
+
+    fn request_legacy_transmission(
+        &mut self,
+        packet: Packet,
+        from: DeviceId,
+        channel_id: ChannelId,
+    ) -> Result<(), SimulationError> {
         let runtime = self
             .channels
             .get(&channel_id)
@@ -625,6 +773,7 @@ impl Simulator {
                 base_bit_rate_bps: base_rate,
                 selected_bit_rate_bps: rate,
                 reception_start_ns,
+                lost: false,
             },
         )
     }

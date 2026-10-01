@@ -1,4 +1,4 @@
-use crate::FrequencyBand;
+use crate::{FrequencyBand, PacketMetadata};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -135,6 +135,8 @@ pub struct Packet {
     destination: DeviceId,
     payload: Vec<u8>,
     hops_remaining: u16,
+    #[serde(default, skip_serializing_if = "PacketMetadata::is_default")]
+    metadata: PacketMetadata,
 }
 
 impl Packet {
@@ -144,6 +146,7 @@ impl Packet {
         destination: DeviceId,
         payload: Vec<u8>,
         hops_remaining: u16,
+        metadata: PacketMetadata,
     ) -> Self {
         Self {
             id,
@@ -151,6 +154,7 @@ impl Packet {
             destination,
             payload,
             hops_remaining,
+            metadata,
         }
     }
 
@@ -184,6 +188,18 @@ impl Packet {
         self.hops_remaining
     }
 
+    /// Returns endpoint-supplied scheduling metadata.
+    #[must_use]
+    pub const fn metadata(&self) -> &PacketMetadata {
+        &self.metadata
+    }
+
+    pub(crate) fn expired_at(&self, at: SimTime) -> bool {
+        self.metadata
+            .expires_at
+            .is_some_and(|expires| at >= expires)
+    }
+
     pub(crate) fn forwarded(&self) -> Option<Self> {
         self.hops_remaining.checked_sub(1).map(|remaining| {
             let mut packet = self.clone();
@@ -212,6 +228,27 @@ pub enum DropReason {
         /// The affected radio channel.
         channel: ChannelId,
     },
+    /// A bounded waiting queue could not admit the packet.
+    QueueOverflow {
+        /// The saturated channel.
+        channel: ChannelId,
+    },
+    /// The complete wire packet exceeded a channel's MTU.
+    MtuExceeded {
+        /// The constrained channel.
+        channel: ChannelId,
+        /// The configured maximum wire size.
+        mtu_bytes: usize,
+        /// The attempted wire size.
+        wire_bytes: usize,
+    },
+    /// A seeded channel-loss decision discarded the packet after serialization.
+    ChannelLoss {
+        /// The lossy channel.
+        channel: ChannelId,
+    },
+    /// The packet reached its exclusive virtual-time deadline.
+    Expired,
     /// A forwarding device had no matching rule.
     NoForwardingRule,
     /// The packet reached a sink other than its destination.

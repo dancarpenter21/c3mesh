@@ -8,6 +8,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Opt-in bounded directional queues, FIFO, strict-priority admission and service,
+  and weighted-fair scheduling with stable endpoint flow identities.
+- Tick-boundary advancement that retains future internal and observable events.
+- Endpoint packet metadata with priority, traffic class, flow identity, and expiry.
+- MTU and wire-overhead accounting, shared serialization media, and seeded loss.
+- Live directional queue metrics, packet-engine validation, and congestion tests.
 - Opt-in radio frequency bands and overlap-aware receiver interference.
 - Normalized jamming response with directional degradation and severing.
 - Initial, live, and scheduled interference snapshots for intermittent effects.
