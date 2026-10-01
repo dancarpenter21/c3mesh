@@ -1,0 +1,8 @@
+.git/
+target/
+tmp/
+.codex/
+.agents/
+**/.env
+**/.env.*
+*.log

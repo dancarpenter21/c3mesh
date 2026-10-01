@@ -528,6 +528,8 @@ exclusive built-in variants.
 
 Continuous integration checks Rust 1.85.0 and current stable on Linux and Windows. The workflow covers formatting, strict lints, all-feature and default-feature tests, the bounded-queue example, and a package dry run. Action revisions are pinned to immutable commits; see [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
+When this checkout is used as a named Docker build context by a consumer, [.dockerignore](.dockerignore) excludes local Cargo output, Git history, tool state, and environment files. Source, manifests, examples, and test fixtures remain available. This prevents accumulated build artifacts from being transferred with a source dependency.
+
 ## License
 
 Licensed under either of
