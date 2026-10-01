@@ -526,7 +526,7 @@ exclusive built-in variants.
 
 `c3mesh` requires Rust 1.85 or newer.
 
-Continuous integration checks Rust 1.85.1 and current stable on Linux and Windows. The workflow covers formatting, strict lints, all-feature and default-feature tests, and the bounded-queue example. Action revisions are pinned to immutable commits; see [.github/workflows/checks.yml](.github/workflows/checks.yml).
+Continuous integration checks Rust 1.85.0 and current stable on Linux and Windows. The workflow covers formatting, strict lints, all-feature and default-feature tests, the bounded-queue example, and a package dry run. Action revisions are pinned to immutable commits; see [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## License
 
