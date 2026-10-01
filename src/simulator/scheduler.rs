@@ -274,8 +274,16 @@ impl Simulator {
                     frequency_band: metrics.frequency_band,
                 }),
             )?;
+            // An in-flight expiry is observable at its deadline, even when the
+            // full transmission or propagation would finish much later. Keep
+            // the serializer reservation: transmissions are non-preemptive.
+            let terminal_ns = selected
+                .packet
+                .metadata()
+                .expires_at
+                .map_or(receive_ns, |deadline| receive_ns.min(deadline.as_nanos()));
             self.enqueue(
-                receive_ns,
+                terminal_ns,
                 InternalEvent::Receive {
                     packet: selected.packet,
                     channel: channel.clone(),

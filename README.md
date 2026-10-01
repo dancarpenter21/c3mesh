@@ -184,7 +184,12 @@ An expiry timestamp is an **exclusive** deadline. A packet already expired at
 injection is dropped immediately. Waiting packets expire at their deadline and
 release capacity, including when a deadline precedes an existing queue wakeup.
 An in-flight packet whose arrival is at or after its deadline produces
-`Expired` at arrival and does not forward or deliver. Endpoint metadata follows
+`PacketDropped { reason: Expired }` at the deadline, even if serialization or
+propagation would finish much later. It never emits a receive or delivery event.
+Transmissions remain non-preemptive: expiry does not cancel the reserved physical
+serialization time, and propagation does not reserve a shared medium.
+
+Endpoint metadata follows
 the packet through routers unchanged; routers never inspect application payloads.
 
 `advance_to(boundary)` returns all events at or before that boundary, including

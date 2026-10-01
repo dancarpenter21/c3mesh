@@ -931,3 +931,94 @@ fn metadata_activation_preserves_legacy_reservations_and_clone_telemetry() {
     assert_eq!(remaining, events[consumed..]);
     assert_eq!(clone.channel_queue_metrics("link").unwrap().bytes_0_to_1, 0);
 }
+
+#[test]
+fn in_flight_expiry_is_observable_at_the_deadline_before_serialization_finishes() {
+    let mut simulator = simulator(Default::default());
+    let expired = simulator
+        .schedule_send_with_metadata(
+            time(0),
+            "source",
+            "sink",
+            vec![0; 100],
+            PacketMetadata {
+                expires_at: Some(time(5)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .get();
+    let following = send(&mut simulator, 0, 10, 0, 1);
+    assert_eq!(
+        starts(&simulator.advance_to(time(4)).unwrap()),
+        vec![(expired, 0)]
+    );
+    let expiry = simulator.advance_to(time(5)).unwrap();
+    assert_eq!(drops(&expiry), vec![(expired, 5, DropReason::Expired)]);
+    assert_eq!(simulator.now(), time(5));
+    assert_eq!(
+        simulator
+            .channel_queue_metrics("link")
+            .unwrap()
+            .packets_0_to_1,
+        1
+    );
+    let remainder = simulator.run().unwrap();
+    assert_eq!(starts(&remainder), vec![(following, 100)]);
+    assert!(!remainder.iter().any(|event| matches!(event, NetworkEvent::DataReceived { packet, .. } | NetworkEvent::PacketDelivered { packet, .. } if packet.id().get() == expired)));
+    assert!(drops(&remainder).is_empty());
+}
+
+#[test]
+fn propagation_expiry_emits_once_at_the_deadline_without_reserving_the_medium() {
+    let mut network = topology();
+    network.channels[0].propagation_delay_ns = 100;
+    let mut simulator = Simulator::new_with_options(network, SimulatorOptions::default()).unwrap();
+    let expired = simulator
+        .schedule_send_with_metadata(
+            time(0),
+            "source",
+            "sink",
+            vec![0; 10],
+            PacketMetadata {
+                expires_at: Some(time(40)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .get();
+    let following = send(&mut simulator, 0, 10, 0, 1);
+    let before = simulator.advance_to(time(39)).unwrap();
+    assert_eq!(starts(&before), vec![(expired, 0), (following, 10)]);
+    assert!(drops(&before).is_empty());
+    assert_eq!(
+        drops(&simulator.advance_to(time(40)).unwrap()),
+        vec![(expired, 40, DropReason::Expired)]
+    );
+    let remainder = simulator.run().unwrap();
+    assert!(drops(&remainder).is_empty());
+    assert!(remainder.iter().any(|event| matches!(event, NetworkEvent::PacketDelivered { at, packet, .. } if packet.id().get() == following && *at == time(120))));
+    assert!(!remainder.iter().any(|event| matches!(event, NetworkEvent::PacketDelivered { packet, .. } if packet.id().get() == expired)));
+}
+
+#[test]
+fn packet_can_arrive_just_before_its_deadline_without_a_later_expiry_event() {
+    let mut simulator = simulator(Default::default());
+    let delivered = simulator
+        .schedule_send_with_metadata(
+            time(0),
+            "source",
+            "sink",
+            vec![0; 10],
+            PacketMetadata {
+                expires_at: Some(time(11)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .get();
+    let events = simulator.run().unwrap();
+    assert!(drops(&events).is_empty());
+    assert!(events.iter().any(|event| matches!(event, NetworkEvent::PacketDelivered { at, packet, .. } if packet.id().get() == delivered && *at == time(10))));
+    assert_eq!(simulator.now(), time(10));
+}
