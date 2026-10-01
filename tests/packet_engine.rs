@@ -1022,3 +1022,108 @@ fn packet_can_arrive_just_before_its_deadline_without_a_later_expiry_event() {
     assert!(events.iter().any(|event| matches!(event, NetworkEvent::PacketDelivered { at, packet, .. } if packet.id().get() == delivered && *at == time(10))));
     assert_eq!(simulator.now(), time(10));
 }
+
+#[test]
+fn waiting_byte_limit_allows_immediate_transmission_but_bounds_busy_admission() {
+    for discipline in [
+        QueueDiscipline::Fifo,
+        QueueDiscipline::StrictPriority,
+        QueueDiscipline::WeightedFair,
+    ] {
+        let mut simulator = simulator(ChannelOptions {
+            wire_overhead_bytes: 4,
+            mtu_bytes: Some(120),
+            queue: QueueConfig {
+                max_bytes: Some(16),
+                discipline,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let active = send(&mut simulator, 0, 100, 1, 0);
+        let waiting = send(&mut simulator, 1, 12, 1, 1);
+        let overflow = send(&mut simulator, 1, 13, 240, 2);
+        let first = simulator.advance_to(time(1)).unwrap();
+        assert_eq!(starts(&first), vec![(active, 0)]);
+        assert_eq!(
+            drops(&first),
+            vec![(
+                overflow,
+                1,
+                DropReason::QueueOverflow {
+                    channel: "link".into()
+                }
+            )]
+        );
+        let metrics = simulator.channel_queue_metrics("link").unwrap();
+        assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (1, 16));
+        assert_eq!(starts(&simulator.run().unwrap()), vec![(waiting, 104)]);
+        let idle_again = send(&mut simulator, 120, 100, 1, 0);
+        assert_eq!(starts(&simulator.run().unwrap()), vec![(idle_again, 120)]);
+        let too_large = send(&mut simulator, 224, 117, 1, 0);
+        assert_eq!(
+            drops(&simulator.run().unwrap()),
+            vec![(
+                too_large,
+                224,
+                DropReason::MtuExceeded {
+                    channel: "link".into(),
+                    mtu_bytes: 120,
+                    wire_bytes: 121,
+                }
+            )]
+        );
+    }
+}
+
+#[test]
+fn waiting_byte_limit_applies_while_a_shared_medium_is_busy() {
+    let options = ChannelOptions {
+        mtu_bytes: Some(120),
+        queue: QueueConfig {
+            max_bytes: Some(16),
+            ..Default::default()
+        },
+        shared_medium: Some("radio".into()),
+        ..Default::default()
+    };
+    let mut simulator = Simulator::new_with_options(
+        two_links(),
+        SimulatorOptions {
+            channels: BTreeMap::from([("link".into(), options.clone()), ("link2".into(), options)]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let first = simulator
+        .schedule_send(time(0), "source", "sink", vec![0; 100])
+        .unwrap()
+        .get();
+    let blocked = simulator
+        .schedule_send(time(1), "source2", "sink2", vec![0; 20])
+        .unwrap()
+        .get();
+    let later = simulator
+        .schedule_send(time(100), "source2", "sink2", vec![0; 20])
+        .unwrap()
+        .get();
+    let events = simulator.run().unwrap();
+    assert_eq!(starts(&events), vec![(first, 0), (later, 100)]);
+    assert_eq!(
+        drops(&events),
+        vec![(
+            blocked,
+            1,
+            DropReason::QueueOverflow {
+                channel: "link2".into()
+            }
+        )]
+    );
+    assert_eq!(
+        simulator
+            .channel_queue_metrics("link2")
+            .unwrap()
+            .bytes_0_to_1,
+        0
+    );
+}

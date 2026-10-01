@@ -22,6 +22,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Waiting-buffer byte limits no longer reject packets that can start on an idle
+  serializer immediately. MTU checks still apply, and a busy shared medium or
+  older waiting traffic requires admission under the waiting limits.
+- In-flight packet expiry emits its terminal drop at the exclusive deadline
+  without cancelling non-preemptive physical serialization reservations.
 - Queue telemetry now reads per-channel counters and indexed legacy wire starts
   instead of scanning the global simulation event queue. Timestamp boundaries,
   full-duplex counts, and existing reservations during engine activation remain

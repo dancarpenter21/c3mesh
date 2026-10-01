@@ -72,12 +72,18 @@ impl Simulator {
         }
         self.expire_waiting(&channel, direction)?;
         let waiting = &self.channels[&channel].waiting[direction];
-        let can_preempt = options.queue.discipline == QueueDiscipline::StrictPriority
+        // A packet starting synchronously never occupies the waiting buffer.
+        // A shared-medium reservation or an older waiting packet still requires
+        // admission under the configured bounds and scheduling discipline.
+        let must_wait = !waiting.packets.is_empty()
+            || self.direction_ready_ns(&channel, direction, &options) > self.now.as_nanos();
+        let can_preempt = must_wait
+            && options.queue.discipline == QueueDiscipline::StrictPriority
             && preemption_can_fit(waiting, wire_bytes, packet.metadata().priority, &options);
-        if !waiting.fits(wire_bytes, &options) && !can_preempt {
+        if must_wait && !waiting.fits(wire_bytes, &options) && !can_preempt {
             return self.drop_now(packet, from, DropReason::QueueOverflow { channel });
         }
-        while !self.channels[&channel].waiting[direction].fits(wire_bytes, &options) {
+        while must_wait && !self.channels[&channel].waiting[direction].fits(wire_bytes, &options) {
             let waiting = &mut self
                 .channels
                 .get_mut(&channel)

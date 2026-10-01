@@ -147,7 +147,10 @@ Queue telemetry queries inspect only the selected channel: live queues use store
 
 Queue bounds apply **per direction** to waiting packets and their full wire
 size, excluding packets already serializing or propagating. An idle serializer
-starts its first admitted packet immediately. FIFO and weighted-fair queues
+starts its first admitted packet immediately. A packet fitting the MTU can
+start immediately even if its wire size exceeds the waiting-buffer byte limit;
+that limit applies if the serializer or shared medium is busy, or older packets
+are waiting. Every packet still obeys the MTU. FIFO and weighted-fair queues
 drop the arriving packet when full. Strict priority can evict lower-priority
 waiting packets to admit a higher-priority packet; it preserves older packets
 on equal-priority eviction ties and never partially evicts if the arrival still
