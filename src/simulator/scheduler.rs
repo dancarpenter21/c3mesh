@@ -4,7 +4,8 @@ use crate::{ChannelOptions, ChannelQueueMetrics, QueueDiscipline};
 impl Simulator {
     /// Returns live waiting-queue occupancy for both channel directions.
     ///
-    /// Packets currently serializing or propagating are excluded.
+    /// Packets currently serializing or propagating are excluded. Queries use
+    /// only the selected channel; they never scan the global event queue.
     pub fn channel_queue_metrics(
         &self,
         channel: impl Into<ChannelId>,
@@ -14,34 +15,14 @@ impl Simulator {
             .channels
             .get(&channel)
             .ok_or_else(|| SimulationError::UnknownChannel(channel.clone()))?;
-        let mut metrics = ChannelQueueMetrics {
-            packets_0_to_1: runtime.waiting[0].packets.len(),
-            packets_1_to_0: runtime.waiting[1].packets.len(),
-            bytes_0_to_1: runtime.waiting[0].bytes,
-            bytes_1_to_0: runtime.waiting[1].bytes,
-        };
-        // Legacy reservations are waiting until their scheduled wire start.
-        for internal in self.queue.values() {
-            if let InternalEvent::Emit(NetworkEvent::TransmissionStarted {
-                at,
-                packet,
-                channel: reserved,
-                from,
-                ..
-            }) = internal
-            {
-                if reserved == &channel && *at > self.now {
-                    if from == &runtime.endpoints[0] {
-                        metrics.packets_0_to_1 += 1;
-                        metrics.bytes_0_to_1 += packet.payload().len();
-                    } else {
-                        metrics.packets_1_to_0 += 1;
-                        metrics.bytes_1_to_0 += packet.payload().len();
-                    }
-                }
-            }
-        }
-        Ok(metrics)
+        let forward = runtime.legacy_waiting[0].metrics(self.now.as_nanos());
+        let reverse = runtime.legacy_waiting[1].metrics(self.now.as_nanos());
+        Ok(ChannelQueueMetrics {
+            packets_0_to_1: runtime.waiting[0].packets.len() + forward.0,
+            packets_1_to_0: runtime.waiting[1].packets.len() + reverse.0,
+            bytes_0_to_1: runtime.waiting[0].bytes + forward.1,
+            bytes_1_to_0: runtime.waiting[1].bytes + reverse.1,
+        })
     }
 
     pub(super) fn queue_transmission(

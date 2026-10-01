@@ -124,3 +124,54 @@ impl PacketQueue {
             .map(|(index, _)| index)
     }
 }
+
+// Legacy wire starts are appended in timestamp order. Prefix byte totals let
+// telemetry exclude every start at or before now without scanning the simulator
+// event queue, even between public events at the same timestamp.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReservedQueue {
+    starts: VecDeque<(u64, u128)>,
+    retired_bytes: u128,
+}
+
+impl ReservedQueue {
+    pub fn reserve(&mut self, starts_at: u64, bytes: usize) -> Result<(), SimulationError> {
+        debug_assert!(self.starts.back().is_none_or(|(at, _)| *at <= starts_at));
+        let cumulative = self
+            .starts
+            .back()
+            .map_or(self.retired_bytes, |(_, bytes)| *bytes)
+            .checked_add(bytes as u128)
+            .ok_or(SimulationError::TimeOverflow)?;
+        self.starts.push_back((starts_at, cumulative));
+        Ok(())
+    }
+
+    pub fn release_started(&mut self, now: u64) {
+        while self.starts.front().is_some_and(|(at, _)| *at <= now) {
+            self.retired_bytes = self
+                .starts
+                .pop_front()
+                .expect("checked front reservation")
+                .1;
+        }
+        if self.starts.is_empty() {
+            self.retired_bytes = 0;
+        }
+    }
+
+    pub fn metrics(&self, now: u64) -> (usize, usize) {
+        let first_waiting = self.starts.partition_point(|(at, _)| *at <= now);
+        let Some((_, total)) = self.starts.back() else {
+            return (0, 0);
+        };
+        let preceding = if first_waiting == 0 {
+            self.retired_bytes
+        } else {
+            self.starts[first_waiting - 1].1
+        };
+        let bytes = usize::try_from(total - preceding)
+            .expect("queued payloads fit into process address space");
+        (self.starts.len() - first_waiting, bytes)
+    }
+}

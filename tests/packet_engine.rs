@@ -822,3 +822,112 @@ fn options_and_metadata_round_trip_without_changing_old_packet_json() {
         panic!("expected transmission start");
     }
 }
+
+#[test]
+fn legacy_queue_metrics_exclude_wire_starts_at_the_current_time_between_events() {
+    let mut simulator = Simulator::new(topology()).unwrap();
+    for bytes in [100, 10, 0, 20] {
+        simulator.send("source", "sink", vec![0; bytes]).unwrap();
+    }
+    assert_eq!(
+        simulator
+            .channel_queue_metrics("link")
+            .unwrap()
+            .packets_0_to_1,
+        0
+    );
+    let mut events = simulator.advance_to(time(0)).unwrap();
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (3, 30));
+    events.extend(simulator.advance_to(time(99)).unwrap());
+    assert_eq!(simulator.channel_queue_metrics("link").unwrap(), metrics);
+
+    // A receive event precedes the next wire-start event at this timestamp.
+    let event = simulator.step().unwrap().unwrap();
+    assert!(matches!(event, NetworkEvent::DataReceived { at, .. } if at == time(100)));
+    events.push(event);
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (2, 20));
+    while simulator.now() < time(110) {
+        events.push(simulator.step().unwrap().unwrap());
+    }
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (0, 0));
+    events.extend(simulator.run().unwrap());
+    assert_eq!(starts(&events), vec![(0, 0), (1, 100), (2, 110), (3, 110)]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, NetworkEvent::PacketDelivered { .. }))
+            .count(),
+        4
+    );
+}
+
+#[test]
+fn legacy_queue_metrics_track_full_duplex_directions_independently() {
+    let mut config = topology();
+    config.devices[1].kind = DeviceKind::Source {
+        egress: "link".into(),
+    };
+    let mut simulator = Simulator::new(config).unwrap();
+    simulator.send("source", "sink", vec![0; 100]).unwrap();
+    simulator.send("source", "sink", vec![0; 10]).unwrap();
+    simulator.send("sink", "source", vec![0; 200]).unwrap();
+    simulator.send("sink", "source", vec![0; 20]).unwrap();
+    simulator.advance_to(time(0)).unwrap();
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (1, 10));
+    assert_eq!((metrics.packets_1_to_0, metrics.bytes_1_to_0), (1, 20));
+    simulator.advance_to(time(100)).unwrap();
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (0, 0));
+    assert_eq!((metrics.packets_1_to_0, metrics.bytes_1_to_0), (1, 20));
+    simulator.advance_to(time(200)).unwrap();
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!(
+        (
+            metrics.packets_0_to_1,
+            metrics.bytes_0_to_1,
+            metrics.packets_1_to_0,
+            metrics.bytes_1_to_0
+        ),
+        (0, 0, 0, 0)
+    );
+    simulator.run().unwrap();
+    // A new busy period must not carry retired bytes into its queue count.
+    simulator.send("source", "sink", vec![0; 20]).unwrap();
+    simulator.send("source", "sink", vec![0; 30]).unwrap();
+    simulator.advance_to(time(220)).unwrap();
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (1, 30));
+}
+
+#[test]
+fn metadata_activation_preserves_legacy_reservations_and_clone_telemetry() {
+    let mut simulator = Simulator::new(topology()).unwrap();
+    simulator
+        .schedule_send(time(0), "source", "sink", vec![0; 100])
+        .unwrap();
+    simulator
+        .schedule_send(time(1), "source", "sink", vec![0; 20])
+        .unwrap();
+    let queued = send(&mut simulator, 2, 10, 9, 7);
+    let mut events = simulator.advance_to(time(2)).unwrap();
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (2, 30));
+    let consumed = events.len();
+    let mut clone = simulator.clone();
+    assert_eq!(clone.channel_queue_metrics("link").unwrap(), metrics);
+    events.extend(simulator.advance_to(time(100)).unwrap());
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (1, 10));
+    events.extend(simulator.advance_to(time(120)).unwrap());
+    let metrics = simulator.channel_queue_metrics("link").unwrap();
+    assert_eq!((metrics.packets_0_to_1, metrics.bytes_0_to_1), (0, 0));
+    events.extend(simulator.run().unwrap());
+    assert_eq!(starts(&events), vec![(0, 0), (1, 100), (queued, 120)]);
+    let remaining = clone.run().unwrap();
+    assert_eq!(remaining, events[consumed..]);
+    assert_eq!(clone.channel_queue_metrics("link").unwrap().bytes_0_to_1, 0);
+}

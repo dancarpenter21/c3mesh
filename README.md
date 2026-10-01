@@ -143,6 +143,8 @@ let waiting = simulator.channel_queue_metrics("link")?;
 # }
 ```
 
+Queue telemetry queries inspect only the selected channel: live queues use stored counters, and legacy FIFO reservations use indexed wire-start times. Packets starting exactly at the current virtual time are excluded even when other public events at that timestamp have yet to be consumed.
+
 Queue bounds apply **per direction** to waiting packets and their full wire
 size, excluding packets already serializing or propagating. An idle serializer
 starts its first admitted packet immediately. FIFO and weighted-fair queues

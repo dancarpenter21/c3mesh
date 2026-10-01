@@ -1,4 +1,4 @@
-use crate::packet_queue::PacketQueue;
+use crate::packet_queue::{PacketQueue, ReservedQueue};
 use crate::{
     ChannelConfig, ChannelId, ChannelMetrics, ChannelState, DeviceId, DeviceKind, DistanceChannel,
     DistanceRateModel, DropReason, FrequencyBand, InterferenceResponse, MobilityModel,
@@ -22,6 +22,7 @@ struct ChannelRuntime {
     radio: Option<RadioChannel>,
     direction_available_ns: [u64; 2],
     waiting: [PacketQueue; 2],
+    legacy_waiting: [ReservedQueue; 2],
     packet_engine: bool,
 }
 
@@ -36,6 +37,7 @@ impl From<ChannelConfig> for ChannelRuntime {
             radio: value.radio,
             direction_available_ns: [0, 0],
             waiting: Default::default(),
+            legacy_waiting: Default::default(),
             packet_engine: false,
         }
     }
@@ -56,6 +58,11 @@ enum InternalEvent {
         direction: usize,
     },
     Emit(NetworkEvent),
+    LegacyStart {
+        event: NetworkEvent,
+        channel: ChannelId,
+        direction: usize,
+    },
     Receive {
         packet: Packet,
         channel: ChannelId,
@@ -471,6 +478,18 @@ impl Simulator {
             self.now = SimTime::from_nanos(time_ns);
             match internal {
                 InternalEvent::Emit(event) => return Ok(Some(event)),
+                InternalEvent::LegacyStart {
+                    event,
+                    channel,
+                    direction,
+                } => {
+                    self.channels
+                        .get_mut(&channel)
+                        .expect("validated channel remains present")
+                        .legacy_waiting[direction]
+                        .release_started(time_ns);
+                    return Ok(Some(event));
+                }
                 InternalEvent::Drain { channel, direction } => {
                     let key = (channel.clone(), direction);
                     if self.queue_wakes.get(&key) == Some(&time_ns) {
@@ -745,23 +764,34 @@ impl Simulator {
             .expect("validated channel must remain present")
             .direction_available_ns[direction] = serialization_end_ns;
 
+        if start_ns > self.now.as_nanos() {
+            self.channels
+                .get_mut(&channel_id)
+                .expect("validated channel remains present")
+                .legacy_waiting[direction]
+                .reserve(start_ns, packet.payload().len())?;
+        }
         let receive_at = SimTime::from_nanos(receive_ns);
         self.enqueue(
             start_ns,
-            InternalEvent::Emit(NetworkEvent::TransmissionStarted {
-                at: SimTime::from_nanos(start_ns),
-                packet: packet.clone(),
+            InternalEvent::LegacyStart {
                 channel: channel_id.clone(),
-                from: from.clone(),
-                to: to.clone(),
-                receive_at,
-                distance_mm: metrics
-                    .distance_m
-                    .map(distance_to_millimeters)
-                    .transpose()?,
-                effective_bit_rate_bps: rate,
-                frequency_band: metrics.frequency_band,
-            }),
+                direction,
+                event: NetworkEvent::TransmissionStarted {
+                    at: SimTime::from_nanos(start_ns),
+                    packet: packet.clone(),
+                    channel: channel_id.clone(),
+                    from: from.clone(),
+                    to: to.clone(),
+                    receive_at,
+                    distance_mm: metrics
+                        .distance_m
+                        .map(distance_to_millimeters)
+                        .transpose()?,
+                    effective_bit_rate_bps: rate,
+                    frequency_band: metrics.frequency_band,
+                },
+            },
         )?;
         self.enqueue(
             receive_ns,
