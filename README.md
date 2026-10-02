@@ -82,7 +82,7 @@ packets already on the wire to propagate while the next packet serializes.
 packet has arrived. A switch or router can begin forwarding at that same virtual
 timestamp. Sink delivery and expected failures are reported as separate events.
 
-Events can be observed in three ways:
+Events can be observed in four ways:
 
 - `Simulator::step` advances to one observable event.
 - `Simulator::run` returns all remaining events in deterministic order.
@@ -215,7 +215,7 @@ Convenience loaders are available through optional features:
 
 ```toml
 [dependencies]
-c3mesh = { version = "0.1", features = ["json", "yaml"] }
+c3mesh = { version = "0.2", features = ["json", "yaml"] }
 ```
 
 Device variants use a `kind` tag. For example:
