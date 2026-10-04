@@ -213,6 +213,8 @@ impl Packet {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DropReason {
+    /// A runtime endpoint or its attached channel was retired.
+    EndpointRetired,
     /// The selected channel was severed.
     ChannelSevered {
         /// The unavailable channel.

@@ -7,6 +7,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+mod runtime;
 mod scheduler;
 
 const DEFAULT_HOP_LIMIT: u16 = 64;
@@ -47,6 +48,7 @@ impl From<ChannelConfig> for ChannelRuntime {
 struct DeviceRuntime {
     kind: DeviceKind,
     mobility: MobilityModel,
+    mobility_history: BTreeMap<u64, MobilityModel>,
     interference: BTreeMap<u64, Vec<ReceiverInterference>>,
 }
 
@@ -78,6 +80,9 @@ enum InternalEvent {
 /// A deterministic, discrete-event simulation of a validated network topology.
 #[derive(Clone, Debug)]
 pub struct Simulator {
+    configuration: NetworkConfig,
+    used_devices: std::collections::BTreeSet<DeviceId>,
+    used_channels: std::collections::BTreeSet<ChannelId>,
     devices: BTreeMap<DeviceId, DeviceRuntime>,
     channels: BTreeMap<ChannelId, ChannelRuntime>,
     queue: BTreeMap<(u64, u64), InternalEvent>,
@@ -102,6 +107,7 @@ impl Simulator {
     ) -> Result<Self, SimulationError> {
         config.validate()?;
         options.validate(&config)?;
+        let configuration = config.clone();
         let devices = config
             .devices
             .into_iter()
@@ -110,6 +116,7 @@ impl Simulator {
                     device.id,
                     DeviceRuntime {
                         kind: device.kind,
+                        mobility_history: BTreeMap::from([(0, device.mobility.clone())]),
                         mobility: device.mobility,
                         interference: BTreeMap::from([(0, device.interference)]),
                     },
@@ -127,6 +134,13 @@ impl Simulator {
             })
             .collect();
         Ok(Self {
+            used_devices: configuration.devices.iter().map(|d| d.id.clone()).collect(),
+            used_channels: configuration
+                .channels
+                .iter()
+                .map(|c| c.id.clone())
+                .collect(),
+            configuration,
             devices,
             channels,
             queue: BTreeMap::new(),
@@ -155,7 +169,14 @@ impl Simulator {
         let position = self
             .devices
             .get(&device)
-            .map(|runtime| runtime.mobility.position_at(at))
+            .map(|runtime| {
+                runtime
+                    .mobility_history
+                    .range(..=at.as_nanos())
+                    .next_back()
+                    .map_or(&runtime.mobility, |(_, model)| model)
+                    .position_at(at)
+            })
             .ok_or(SimulationError::UnknownDevice(device))?;
         if position.is_finite() {
             Ok(position)
