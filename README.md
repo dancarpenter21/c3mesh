@@ -546,3 +546,14 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
+
+### Runtime endpoints
+
+`Simulator::register_topology` atomically adds devices/channels and their packet-engine
+options without restarting queues, changing the loss seed, or resetting packet IDs.
+Identifiers remain reserved after retirement. `set_device_mobility` changes a trajectory
+at the current virtual time and preserves earlier trajectory queries. Advance to the
+change time first; `next_event_time` supports synchronization with an external model.
+`retire_devices` removes incident channels and sources whose egress disappears,
+cleans forwarding references, and emits `EndpointRetired` once for each affected
+queued or in-flight packet. Unrelated traffic and shared-medium reservations survive.
