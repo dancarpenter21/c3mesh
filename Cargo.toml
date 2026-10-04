@@ -1,12 +1,13 @@
 [package]
 name = "c3mesh"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Deterministic discrete-event simulation for fixed and mobile communication networks"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 documentation = "https://docs.rs/c3mesh"
+repository = "https://github.com/dancarpenter21/c3mesh"
 keywords = ["network", "simulation", "mobility", "communications", "discrete-event"]
 categories = ["network-programming", "simulation"]
 include = [

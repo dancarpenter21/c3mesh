@@ -6,6 +6,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-04
+
+### Added
+
+- Atomic runtime registration of devices and channels without resetting virtual
+  time, packet queues, shared-medium reservations, or deterministic loss state.
+- Runtime mobility updates with historical trajectory queries.
+- Next-event time inspection for coordinating an external simulation.
+- Endpoint retirement that cancels affected queued and in-flight packets while
+  preserving unrelated traffic. Retired identifiers cannot be reused.
+
+### Changed
+
+- **Breaking:** `DropReason` adds `EndpointRetired`. Downstream exhaustive
+  matches must handle this variant. Serialized configurations remain compatible.
+
+### Validation
+
+- Regression coverage for atomic registration, trajectory changes, queue and
+  in-flight cancellation, legacy transmissions, and identifier reuse.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added
