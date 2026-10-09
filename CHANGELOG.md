@@ -6,6 +6,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-09
+
+### Added
+
+- Opt-in, reception-safe compaction of receiver-interference and mobility history.
+- Retained-history boundary and aggregate history/pending-event statistics.
+- Differential tests for jamming across long receptions, boundary timestamps,
+  same-time updates, future changes, mobility, idle histories and endpoint retirement.
+
+### Changed
+
+- **Breaking:** `SimulationError` adds `HistoryUnavailable { retained_from }`.
+  Queries before explicitly compacted history return this error; applications that
+  never compact retain their existing historical-query behavior.
+
 ## [0.3.0] - 2026-10-04
 
 ### Added

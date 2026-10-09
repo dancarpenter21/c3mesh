@@ -1,4 +1,4 @@
-use crate::{ChannelId, DeviceId};
+use crate::{ChannelId, DeviceId, SimTime};
 use std::error::Error;
 use std::fmt;
 
@@ -138,6 +138,11 @@ pub enum SimulationError {
     NotASource(DeviceId),
     /// An event was requested before the current virtual time.
     TimeInPast,
+    /// The requested time precedes the explicitly compacted history boundary.
+    HistoryUnavailable {
+        /// Earliest time still available for historical queries.
+        retained_from: SimTime,
+    },
     /// A degraded channel state supplied an invalid rate.
     InvalidChannelState(ChannelId),
     /// A runtime receiver-interference snapshot was invalid.
@@ -155,6 +160,11 @@ impl fmt::Display for SimulationError {
             Self::UnknownDevice(id) => write!(formatter, "unknown device `{id}`"),
             Self::UnknownChannel(id) => write!(formatter, "unknown channel `{id}`"),
             Self::NotASource(id) => write!(formatter, "device `{id}` is not a source"),
+            Self::HistoryUnavailable { retained_from } => write!(
+                formatter,
+                "history before {} ns has been compacted",
+                retained_from.as_nanos()
+            ),
             Self::TimeInPast => write!(formatter, "cannot schedule an event in the past"),
             Self::InvalidChannelState(id) => {
                 write!(formatter, "invalid state for channel `{id}`")

@@ -22,4 +22,4 @@ pub use options::{
     ChannelOptions, ChannelQueueMetrics, PacketMetadata, QueueConfig, QueueDiscipline,
     SimulatorOptions,
 };
-pub use simulator::Simulator;
+pub use simulator::{HistoryStatistics, Simulator};

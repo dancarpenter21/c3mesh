@@ -7,7 +7,9 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+mod history;
 mod runtime;
+pub use history::HistoryStatistics;
 mod scheduler;
 
 const DEFAULT_HOP_LIMIT: u16 = 64;
@@ -87,6 +89,7 @@ pub struct Simulator {
     channels: BTreeMap<ChannelId, ChannelRuntime>,
     queue: BTreeMap<(u64, u64), InternalEvent>,
     now: SimTime,
+    history_boundary: SimTime,
     next_sequence: u64,
     next_packet_id: u64,
     options: SimulatorOptions,
@@ -145,6 +148,7 @@ impl Simulator {
             channels,
             queue: BTreeMap::new(),
             now: SimTime::ZERO,
+            history_boundary: SimTime::ZERO,
             next_sequence: 0,
             next_packet_id: 0,
             options,
@@ -165,6 +169,7 @@ impl Simulator {
         device: impl Into<DeviceId>,
         at: SimTime,
     ) -> Result<Position3D, SimulationError> {
+        self.check_history_time(at)?;
         let device = device.into();
         let position = self
             .devices
@@ -191,6 +196,7 @@ impl Simulator {
         channel: impl Into<ChannelId>,
         at: SimTime,
     ) -> Result<ChannelMetrics, SimulationError> {
+        self.check_history_time(at)?;
         let channel_id = channel.into();
         let runtime = self
             .channels
@@ -245,6 +251,7 @@ impl Simulator {
         from: impl Into<DeviceId>,
         at: SimTime,
     ) -> Result<TransmissionMetrics, SimulationError> {
+        self.check_history_time(at)?;
         let channel_id = channel.into();
         let from = from.into();
         let runtime = self
@@ -293,6 +300,7 @@ impl Simulator {
         receiver: impl Into<DeviceId>,
         at: SimTime,
     ) -> Result<Vec<ReceiverInterference>, SimulationError> {
+        self.check_history_time(at)?;
         let receiver = receiver.into();
         let runtime = self
             .devices

@@ -557,3 +557,18 @@ change time first; `next_event_time` supports synchronization with an external m
 `retire_devices` removes incident channels and sources whose egress disappears,
 cleans forwarding references, and emits `EndpointRetired` once for each affected
 queued or in-flight packet. Unrelated traffic and shared-medium reservations survive.
+
+## Explicit history compaction
+
+Long-running applications can call `Simulator::compact_history()` after advancing
+the network. It retains the latest mobility/interference snapshot at or before
+the oldest pending reception start (or current time when earlier), and all later
+snapshots. Future scheduled changes and interference peaks across long receptions
+remain intact. No arbitrary time-to-live or entry cap is applied.
+
+Compaction is opt-in: advancement alone retains history as before. After
+compaction, position, interference and channel/transmission metric queries before
+`retained_history_from()` return `SimulationError::HistoryUnavailable`. Applications
+requiring historical inspection must archive inputs separately or keep full history.
+`history_statistics()` returns aggregate entries, interference contributions and
+pending-event counts; these are observational counts, not heap-byte estimates.
