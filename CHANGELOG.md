@@ -6,6 +6,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Versioned Serde runtime checkpoints and restore, including queued packets,
+  pending receptions, runtime topology, scheduler counters, and retained histories.
+
 ## [0.4.0] - 2026-10-09
 
 ### Added

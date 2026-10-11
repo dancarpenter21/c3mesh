@@ -131,3 +131,54 @@ fn legacy_retirement_drops_reserved_transmissions_once() {
         3
     );
 }
+
+#[test]
+fn snapshot_restores_pending_queue_receptions_and_retired_endpoint_ids() {
+    let mut live = Simulator::new_with_options(
+        topology("primary"),
+        SimulatorOptions {
+            seed: 7,
+            channels: BTreeMap::from([("primary".into(), ChannelOptions::default())]),
+        },
+    )
+    .unwrap();
+    live.register_topology(topology("retired"), SimulatorOptions::default())
+        .unwrap();
+    live.retire_devices(&["retired-tx".into(), "retired-rx".into()])
+        .unwrap();
+    for _ in 0..3 {
+        live.send("primary-tx", "primary-rx", vec![42; 100])
+            .unwrap();
+    }
+    live.advance_to(SimTime::from_nanos(1)).unwrap();
+    let mut restored = Simulator::restore(live.snapshot()).unwrap();
+    assert!(
+        restored
+            .register_topology(topology("retired"), SimulatorOptions::default())
+            .is_err()
+    );
+    assert_eq!(
+        live.send("primary-tx", "primary-rx", vec![9; 100]).unwrap(),
+        restored
+            .send("primary-tx", "primary-rx", vec![9; 100])
+            .unwrap()
+    );
+    assert_eq!(live.run().unwrap(), restored.run().unwrap());
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn serialized_snapshot_preserves_events_and_rejects_corrupt_boundaries() {
+    let mut live = Simulator::new(topology("radio")).unwrap();
+    live.send("radio-tx", "radio-rx", vec![42; 100]).unwrap();
+    live.advance_to(SimTime::from_nanos(10)).unwrap();
+    let bytes = serde_json::to_vec(&live.snapshot()).unwrap();
+    let mut restored = Simulator::restore(serde_json::from_slice(&bytes).unwrap()).unwrap();
+    assert_eq!(bytes, serde_json::to_vec(&restored.snapshot()).unwrap());
+    assert_eq!(live.run().unwrap(), restored.run().unwrap());
+    for (field, value) in [("schema_version", 99), ("next_sequence", 0)] {
+        let mut saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        saved[field] = value.into();
+        assert!(Simulator::restore(serde_json::from_value(saved).unwrap()).is_err());
+    }
+}

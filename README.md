@@ -572,3 +572,13 @@ compaction, position, interference and channel/transmission metric queries befor
 requiring historical inspection must archive inputs separately or keep full history.
 `history_statistics()` returns aggregate entries, interference contributions and
 pending-event counts; these are observational counts, not heap-byte estimates.
+
+### Runtime checkpoints
+
+`Simulator::snapshot()` captures queues, pending receptions, runtime endpoints,
+retired IDs, counters, scheduler state and retained interference/mobility history.
+`Simulator::restore(snapshot)` resumes without advancing virtual time and rejects
+unsupported snapshot versions or invalid boundaries. The snapshot implements
+Serde serialization; applications should use a format that preserves floating
+point values exactly, verify a checksum, and pin both the application schema and
+c3mesh revision. Checkpoints are trusted application data, not untrusted inputs.

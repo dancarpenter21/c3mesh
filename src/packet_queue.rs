@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 type Flow = (DeviceId, u8, u64);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct WaitingPacket {
     pub packet: Packet,
     pub from: DeviceId,
@@ -12,11 +12,12 @@ pub(crate) struct WaitingPacket {
     finish: u128,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PacketQueue {
     pub packets: VecDeque<WaitingPacket>,
     pub bytes: usize,
     pub virtual_time: u128,
+    #[serde(with = "crate::simulator::snapshot::entries")]
     finishes: BTreeMap<Flow, u128>,
 }
 
@@ -128,7 +129,7 @@ impl PacketQueue {
 // Legacy wire starts are appended in timestamp order. Prefix byte totals let
 // telemetry exclude every start at or before now without scanning the simulator
 // event queue, even between public events at the same timestamp.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ReservedQueue {
     starts: VecDeque<(u64, u128)>,
     retired_bytes: u128,

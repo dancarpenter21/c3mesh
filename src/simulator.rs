@@ -11,11 +11,13 @@ mod history;
 mod runtime;
 pub use history::HistoryStatistics;
 mod scheduler;
+pub(crate) mod snapshot;
+pub use snapshot::SimulatorSnapshot;
 
 const DEFAULT_HOP_LIMIT: u16 = 64;
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct ChannelRuntime {
     endpoints: [DeviceId; 2],
     nominal_bit_rate_bps: u64,
@@ -46,7 +48,7 @@ impl From<ChannelConfig> for ChannelRuntime {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct DeviceRuntime {
     kind: DeviceKind,
     mobility: MobilityModel,
@@ -54,7 +56,7 @@ struct DeviceRuntime {
     interference: BTreeMap<u64, Vec<ReceiverInterference>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 enum InternalEvent {
     Inject(Packet),
     Drain {
